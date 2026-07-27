@@ -1,0 +1,40 @@
+# Raw datasets (UCF101, HMDB51, EPIC-KITCHENS clips) -- large, externally downloadable
+data/
+
+# Cloned reference repos (each has its own .git -- not this project's history)
+epic-kitchens-100-annotations/
+epic-kitchens-download-scripts/
+
+# Extracted feature caches -- large, regeneratable from data/ via the extract_*.py scripts
+*.npz
+
+# Model checkpoints -- large binaries, regeneratable by rerunning the corresponding script
+*.pt
+*.pth
+
+# Shell scripts: local absolute paths and/or credentials (e.g. download_epic_resilient.sh's
+# HF_TOKEN) not meant to travel with the repo
+*.sh
+
+# Run logs
+logs/
+
+# Results JSON (regeneratable by rerunning the corresponding run_*.py) -- note this
+# pattern deliberately excludes class_split_*.json, which are configs, not results
+*results*.json
+
+# Notebook
+*.ipynb
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
