@@ -5,6 +5,7 @@ benchmarks on EPIC-KITCHENS-100 and outputs a clear comparison of results.
 """
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -34,8 +35,8 @@ def format_stage2_table(results):
             new_hung = metrics.get('new_cat_hungarian_acc', float('nan'))
             new_nmi = metrics.get('new_cat_nmi', float('nan'))
             
-            new_hung_str = f"{new_hung:.4f}" if not os.isnan(new_hung) else "N/A"
-            new_nmi_str = f"{new_nmi:.4f}" if not os.path.isnan(new_nmi) else "N/A"
+            new_hung_str = f"{new_hung:.4f}" if not math.isnan(new_hung) else "N/A"
+            new_nmi_str = f"{new_nmi:.4f}" if not math.isnan(new_nmi) else "N/A"
             
             lines.append(
                 f"| {space} | {method} | {k_acc:.4f} | {sn_acc:.4f} | {un_rec:.4f} | {fn_rate:.4f} | {new_hung_str} | {new_nmi_str} |"
