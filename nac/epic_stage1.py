@@ -73,7 +73,8 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
         elif name in EVIDENTIAL_CONFIGS:
             cfg = {**EVIDENTIAL_CONFIGS[name], **(overrides or {}), 'total_epoch': epochs}
             loss = make_edl_loss(K, **cfg)
-            head = train_head(X_train, y_train, K, loss, epochs=epochs, seed=seed)
+            ckpt_path = f"checkpoint_stage1_{label_space}_{name}_seed{seed}.pt"
+            head = train_head(X_train, y_train, K, loss, epochs=epochs, seed=seed, checkpoint_path=ckpt_path)
             alpha = predict_alpha(head, X_eval, evidence=cfg['evidence'])
             record(name, vacuity(alpha, K), alpha.argmax(1).cpu().numpy())
         else:

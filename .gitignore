@@ -38,3 +38,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+.venv
+demo_clips/

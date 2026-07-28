@@ -148,7 +148,8 @@ def run_continual(subset=None, methods=ALL_METHODS, seed=0, seen_ratio=40 / 75,
             yd = np.concatenate([y_lab, assign1[free_m]])
             mu, sig = Xd.mean(0), Xd.std(0) + 1e-6
             loss = make_edl_loss(N1, total_epoch=gate_epochs)  # DEAR best config
-            head = train_head((Xd - mu) / sig, yd, N1, loss, epochs=gate_epochs, seed=0)
+            ckpt_path = f"checkpoint_stage2_{subset or 'combined'}_{name}_seed0.pt"
+            head = train_head((Xd - mu) / sig, yd, N1, loss, epochs=gate_epochs, seed=0, checkpoint_path=ckpt_path)
             u_ho = vacuity(predict_alpha(head, (feats[ho1] - mu) / sig), N1)
             tau = np.percentile(u_ho, calib_q)
             alpha_s = predict_alpha(head, (Xs - mu) / sig)

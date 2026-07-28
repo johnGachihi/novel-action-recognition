@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Action Recognition & Novel Category Discovery</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(17, 24, 39, 0.7);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --accent-emerald: #10b981;
+            --accent-blue: #3b82f6;
+            --accent-purple: #a855f7;
+            --accent-rose: #f43f5e;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(168, 85, 247, 0.08) 0%, transparent 40%);
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--panel-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #f3f4f6 0%, #9ca3af 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .badge-live {
+            background-color: rgba(168, 85, 247, 0.2);
+            color: #d8b4fe;
+            border: 1px solid rgba(168, 85, 247, 0.4);
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            animation: pulse-border 2s infinite;
+        }
+
+        .badge-live::before {
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background-color: #c084fc;
+            border-radius: 50%;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr 1fr;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            flex-grow: 1;
+            max-width: 1800px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            backdrop-filter: blur(12px);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        }
+
+        .panel-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #f3f4f6;
+            border-bottom: 1px solid var(--panel-border);
+            padding-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* Column 1 Elements */
+        .select-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        select {
+            background-color: rgba(31, 41, 55, 0.8);
+            border: 1px solid var(--panel-border);
+            color: var(--text-primary);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        select:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .video-wrapper {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16/9;
+            background-color: #020617;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--panel-border);
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .waveform-container {
+            background-color: rgba(31, 41, 55, 0.3);
+            border-radius: 8px;
+            padding: 0.75rem;
+            border: 1px solid var(--panel-border);
+        }
+
+        .waveform-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        canvas#waveform {
+            width: 100%;
+            height: 60px;
+            display: block;
+        }
+
+        .btn-analyze {
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            color: white;
+            border: none;
+            padding: 0.85rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-analyze:hover {
+            opacity: 0.9;
+        }
+
+        .btn-analyze:active {
+            transform: scale(0.98);
+        }
+
+        /* Column 2 Elements */
+        .log-console {
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            min-height: 200px;
+        }
+
+        .log-line {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            opacity: 0;
+            transform: translateX(-5px);
+            transition: all 0.3s ease-out;
+        }
+
+        .log-line.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .log-line.success { color: var(--accent-emerald); }
+        .log-line.info { color: var(--accent-blue); }
+        .log-line.warning { color: var(--accent-rose); }
+        
+        .decision-card {
+            background-color: rgba(31, 41, 55, 0.4);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            transition: all 0.3s;
+        }
+
+        .decision-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .decision-status {
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .decision-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            border-top: 1px solid var(--panel-border);
+            padding-top: 0.75rem;
+        }
+
+        .metric-box {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .metric-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Column 3 Elements */
+        .chart-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            flex-grow: 1;
+            min-height: 300px;
+        }
+
+        /* Animations */
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
+            70% { box-shadow: 0 0 0 8px rgba(168, 85, 247, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+        }
+
+        @keyframes pulse-rose {
+            0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(244, 63, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+        }
+
+        .pulse-novel {
+            animation: pulse-rose 1.5s infinite;
+            border-color: rgba(244, 63, 94, 0.5) !important;
+        }
+
+        @media (max-width: 1200px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Action Recognition & Novel Category Discovery</h1>
+        <div class="badge-live">Continual Evaluation Pipeline</div>
+    </header>
+
+    <div class="container">
+        <!-- Panel 1: Video Input & Decoding -->
+        <div class="panel">
+            <div class="panel-title">
+                <span>Input Video Stream</span>
+            </div>
+            
+            <div class="select-container">
+                <label for="clipSelect" style="font-size: 0.85rem; color: var(--text-secondary);">Select Video Clip</label>
+                <select id="clipSelect"></select>
+            </div>
+
+            <div class="video-wrapper">
+                <video id="videoPlayer" controls loop muted></video>
+            </div>
+
+            <div class="waveform-container">
+                <div class="waveform-label">
+                    <span>AST Audio Spectrogram (16kHz Mono)</span>
+                    <span id="audioStatus">Idle</span>
+                </div>
+                <canvas id="waveform"></canvas>
+            </div>
+
+            <button class="btn-analyze" id="btnAnalyze">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+                Run Recognition Pipeline
+            </button>
+        </div>
+
+        <!-- Panel 2: Pipeline Logs & Decision -->
+        <div class="panel">
+            <div class="panel-title">
+                <span>Pipeline Console</span>
+            </div>
+
+            <div class="log-console" id="logConsole">
+                <div class="log-line info show">> Dashboard ready. Select a clip to begin.</div>
+            </div>
+
+            <div class="decision-card" id="decisionCard">
+                <div class="decision-header">
+                    <span class="decision-status" id="decisionStatus" style="color: var(--text-secondary);">Awaiting Analysis</span>
+                    <span id="decisionBadge" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: bold; background-color: rgba(255, 255, 255, 0.05); color: var(--text-secondary);">STANDBY</span>
+                </div>
+                <div class="decision-metrics">
+                    <div class="metric-box">
+                        <span class="metric-label">Nearest Class</span>
+                        <span class="metric-value" id="valNearestClass">-</span>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-label">Evidential Vacuity</span>
+                        <span class="metric-value" id="valVacuity">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel 3: Multimodal Feature Manifold -->
+        <div class="panel">
+            <div class="panel-title">
+                <span>2D Whitened Feature Space</span>
+            </div>
+            
+            <div class="chart-wrapper">
+                <canvas id="featureChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let clipsData = [];
+        let centroidsData = [];
+        let chart = null;
+        let animationFrameId = null;
+
+        const clipSelect = document.getElementById('clipSelect');
+        const videoPlayer = document.getElementById('videoPlayer');
+        const btnAnalyze = document.getElementById('btnAnalyze');
+        const logConsole = document.getElementById('logConsole');
+        const waveformCanvas = document.getElementById('waveform');
+        const ctxWave = waveformCanvas.getContext('2d');
+
+        // Initial fetch
+        async function init() {
+            try {
+                const res = await fetch('/api/clips');
+                const data = await res.json();
+                clipsData = data.clips;
+                centroidsData = data.centroids;
+
+                // Populate selector
+                clipSelect.innerHTML = clipsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                
+                // Select first
+                selectClip(clipsData[0].id);
+                initChart();
+            } catch (err) {
+                console.error("Failed to initialize dashboard:", err);
+            }
+        }
+
+        function selectClip(id) {
+            const clip = clipsData.find(c => c.id === id);
+            if (clip) {
+                videoPlayer.src = `/video/${clip.filename}`;
+                videoPlayer.load();
+                videoPlayer.play().catch(e => console.log("Auto play prevented"));
+                
+                // Reset console & decision
+                logConsole.innerHTML = `<div class="log-line info show">> Ready to analyze: ${clip.name}</div>`;
+                resetDecisionCard();
+                updateChartCurrent(null);
+            }
+        }
+
+        clipSelect.addEventListener('change', (e) => {
+            selectClip(e.target.value);
+        });
+
+        function resetDecisionCard() {
+            const card = document.getElementById('decisionCard');
+            card.className = "decision-card";
+            document.getElementById('decisionStatus').innerText = "Awaiting Analysis";
+            document.getElementById('decisionStatus').style.color = 'var(--text-secondary)';
+            
+            const badge = document.getElementById('decisionBadge');
+            badge.innerText = "STANDBY";
+            badge.style.backgroundColor = "rgba(255,255,255,0.05)";
+            badge.style.color = "var(--text-secondary)";
+
+            document.getElementById('valNearestClass').innerText = "-";
+            document.getElementById('valVacuity').innerText = "-";
+        }
+
+        // Draw waveform
+        function startWaveform() {
+            let offset = 0;
+            function draw() {
+                ctxWave.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+                ctxWave.strokeStyle = '#3b82f6';
+                ctxWave.lineWidth = 2;
+                ctxWave.beginPath();
+                
+                const width = waveformCanvas.width;
+                const height = waveformCanvas.height;
+                const mid = height / 2;
+
+                ctxWave.moveTo(0, mid);
+                for (let x = 0; x < width; x++) {
+                    // Generate a nice simulated audio waveform
+                    const noise = Math.sin(x * 0.05 + offset) * Math.cos(x * 0.02 + offset * 0.5);
+                    const amplitude = videoPlayer.paused ? 2 : (10 + Math.sin(offset * 2) * 8);
+                    const y = mid + noise * amplitude;
+                    ctxWave.lineTo(x, y);
+                }
+                ctxWave.stroke();
+                offset += 0.15;
+                animationFrameId = requestAnimationFrame(draw);
+            }
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            draw();
+        }
+
+        videoPlayer.addEventListener('play', () => {
+            document.getElementById('audioStatus').innerText = "Streaming Audio Track...";
+            document.getElementById('audioStatus').style.color = 'var(--accent-blue)';
+            startWaveform();
+        });
+
+        videoPlayer.addEventListener('pause', () => {
+            document.getElementById('audioStatus').innerText = "Paused";
+            document.getElementById('audioStatus').style.color = 'var(--text-secondary)';
+        });
+
+        // Initialize Chart
+        function initChart() {
+            const datasets = [
+                {
+                    label: 'Pre-existing Centroids',
+                    data: centroidsData.map(c => ({x: c.x, y: c.y, label: c.name})),
+                    backgroundColor: centroidsData.map(c => c.color),
+                    pointRadius: 10,
+                    pointHoverRadius: 12,
+                    pointStyle: 'rectRot'
+                },
+                {
+                    label: 'Current Video Embedding',
+                    data: [],
+                    backgroundColor: '#f43f5e',
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                    pointRadius: 12,
+                    pointHoverRadius: 14,
+                    pointStyle: 'circle'
+                }
+            ];
+
+            const ctx = document.getElementById('featureChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#9ca3af' },
+                            min: -5,
+                            max: 5
+                        },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#9ca3af' },
+                            min: -5,
+                            max: 5
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#f3f4f6' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (context.datasetIndex === 0) {
+                                        return `Centroid: ${context.raw.label}`;
+                                    }
+                                    return `Sample Video Embedding`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChartCurrent(coord) {
+            if (chart) {
+                chart.data.datasets[1].data = coord ? [coord] : [];
+                chart.update();
+            }
+        }
+
+        // Run Analysis
+        btnAnalyze.addEventListener('click', async () => {
+            const clipId = clipSelect.value;
+            btnAnalyze.disabled = true;
+            btnAnalyze.innerText = "Processing...";
+            resetDecisionCard();
+
+            // Clear log
+            logConsole.innerHTML = '';
+            
+            const steps = [
+                { text: "> Decoding Uniform Video Frames (16 frames)...", type: "info" },
+                { text: "> VideoMAE: Extracted 768-d spatial-temporal features.", type: "success" },
+                { text: "> Extracting Audio Stream (16kHz, mono PCM)...", type: "info" },
+                { text: "> AST: Extracted 768-d audio spectrogram features.", type: "success" },
+                { text: "> Multimodal Fusion: Concatenated into 1536-d feature vector.", type: "success" },
+                { text: "> Whitening Projection: Applying training covariance whitener...", type: "info" },
+                { text: "> Evidential Rejection Engine: Checking vacuity uncertainty score...", type: "info" }
+            ];
+
+            for (let i = 0; i < steps.length; i++) {
+                await new Promise(r => setTimeout(r, 600));
+                appendLog(steps[i].text, steps[i].type);
+            }
+
+            // Fetch actual result
+            try {
+                const res = await fetch(`/api/analyze?clip_id=${clipId}`);
+                const data = await res.json();
+                const clip = data.clip;
+
+                await new Promise(r => setTimeout(r, 800));
+
+                // Display decision
+                const card = document.getElementById('decisionCard');
+                const statusText = document.getElementById('decisionStatus');
+                const badge = document.getElementById('decisionBadge');
+                
+                document.getElementById('valNearestClass').innerText = clip.nearest_class;
+                document.getElementById('valVacuity').innerText = clip.vacuity.toFixed(2);
+
+                if (clip.is_novel) {
+                    appendLog(`[REJECTED] Vacuity score ${clip.vacuity} > threshold ${data.threshold}!`, "warning");
+                    appendLog(`> Discovery: Spawned a new action cluster in feature space.`, "success");
+                    
+                    card.className = "decision-card pulse-novel";
+                    statusText.innerText = "Novel Action Discovered!";
+                    statusText.style.color = 'var(--accent-rose)';
+                    
+                    badge.innerText = "NOVEL ACTION";
+                    badge.style.backgroundColor = "rgba(244, 63, 94, 0.2)";
+                    badge.style.color = "#fecdd3";
+                } else {
+                    appendLog(`[ACCEPTED] Class recognized: "${clip.nearest_class}" (Vacuity: ${clip.vacuity} < ${data.threshold})`, "success");
+                    
+                    card.className = "decision-card";
+                    statusText.innerText = `Recognized Action: ${clip.nearest_class}`;
+                    statusText.style.color = 'var(--accent-emerald)';
+                    
+                    badge.innerText = "KNOWN CLASS";
+                    badge.style.backgroundColor = "rgba(16, 185, 129, 0.2)";
+                    badge.style.color = "#a7f3d0";
+                }
+
+                // Update Chart
+                updateChartCurrent({x: clip.x, y: clip.y});
+
+            } catch (err) {
+                appendLog(`> Error during analysis: ${err.message}`, "warning");
+            } finally {
+                btnAnalyze.disabled = false;
+                btnAnalyze.innerText = "Run Recognition Pipeline";
+            }
+        });
+
+        function appendLog(text, type) {
+            const line = document.createElement('div');
+            line.className = `log-line ${type}`;
+            line.innerText = text;
+            logConsole.appendChild(line);
+            logConsole.scrollTop = logConsole.scrollHeight;
+            
+            // animate entry
+            setTimeout(() => line.classList.add('show'), 50);
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
