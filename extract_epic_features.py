@@ -150,6 +150,22 @@ def collate(batch):
     return torch.stack(pv), torch.tensor(np.array(aw), dtype=torch.float32), list(idxs)
 
 
+class VideoMAEWrapper(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    def forward(self, pixel_values):
+        return self.model(pixel_values=pixel_values).last_hidden_state.mean(dim=1)
+
+
+class ASTWrapper(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    def forward(self, input_values):
+        return self.model(input_values).last_hidden_state.mean(dim=1)
+
+
 def main():
     df = load_epic_manifest(min_count=20)
     print(f"manifest: {len(df)} clips ({df.verb_keep.sum()} verb-kept, {df.noun_keep.sum()} noun-kept)")
@@ -191,8 +207,22 @@ def main():
         p.requires_grad_(False)
     del _ast_full  # free classifier head weights
 
+    # Wrap models
+    videomae_wrapped = VideoMAEWrapper(model)
+    ast_wrapped = ASTWrapper(ast_model)
+
+    batch_size = BATCH_SIZE
+    num_gpus = torch.cuda.device_count()
+    if num_gpus > 1:
+        device_ids = list(range(num_gpus))
+        print(f"Using DataParallel on {num_gpus} GPUs: {device_ids}")
+        videomae_wrapped = torch.nn.DataParallel(videomae_wrapped, device_ids=device_ids)
+        ast_wrapped = torch.nn.DataParallel(ast_wrapped, device_ids=device_ids)
+        batch_size = 32 * num_gpus
+        print(f"Scaled batch size to {batch_size}")
+
     ds = EpicFeatureDataset(remaining.path.tolist(), processor)
-    loader = DataLoader(ds, batch_size=BATCH_SIZE, collate_fn=collate,
+    loader = DataLoader(ds, batch_size=batch_size, collate_fn=collate,
                         num_workers=NUM_WORKERS, shuffle=False, pin_memory=True)
 
     new_feats, new_narr = [], []
@@ -203,18 +233,18 @@ def main():
             if pv is None or aw is None:
                 continue
             pv = pv.to(DEVICE, non_blocking=True)
-            video_out = model(pixel_values=pv).last_hidden_state.mean(dim=1)
+            video_out = videomae_wrapped(pv)
             
             aw_list = [w.numpy() for w in aw]
             audio_inputs = ast_extractor(aw_list, sampling_rate=16000, return_tensors="pt")
             audio_in = audio_inputs['input_values'].to(DEVICE)
-            audio_out = ast_model(audio_in).last_hidden_state.mean(dim=1)
+            audio_out = ast_wrapped(audio_in)
             
             fused_out = torch.cat([video_out, audio_out], dim=-1)
             new_feats.append(fused_out.cpu().numpy())
             new_narr.append(remaining.narration_id.values[idxs])
             n_done += len(idxs)
-            if n_done % (CHECKPOINT_EVERY // BATCH_SIZE * BATCH_SIZE) < BATCH_SIZE:
+            if n_done % (CHECKPOINT_EVERY // batch_size * batch_size) < batch_size:
                 rate = n_done / (time.time() - t0)
                 print(f"  {n_done}/{len(remaining)} embedded ({rate:.1f} clips/sec)", flush=True)
                 checkpoint(feats_done + new_feats, narr_done + new_narr)

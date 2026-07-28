@@ -7,6 +7,8 @@ grouped by video_id, instead of nac.data's UCF101/HMDB51 grouping).
 import json
 
 import numpy as np
+import torch
+import torch.nn as nn
 
 from .clustering import (discover_from_buffer, dpmeans_online, rejection_radii,
                          semisup_kmeans)
@@ -15,7 +17,50 @@ from .evidential import LinearHead, make_edl_loss, predict_alpha, train_head, va
 from .geometry import dist2, fit_whitener
 from .metrics import hungarian_acc, normalized_mutual_info_score
 
-ALL_METHODS = ['closed_world', 'dist_reject', 'dpmeans', 'dear_reject', 'standard_classifier']
+ALL_METHODS = ['closed_world', 'dist_reject', 'dpmeans', 'dear_reject', 'dear_weighted_reject', 'standard_classifier']
+
+
+def compute_evidential_weights(alpha):
+    """Computes uncertainty-guided weights from Dirichlet alpha parameters."""
+    N, K = alpha.shape
+    S = np.sum(alpha, axis=1, keepdims=True)  # (N, 1)
+    
+    # 1. Belief masses and Vacuity
+    b = (alpha - 1) / S  # (N, K)
+    u = K / S.squeeze(-1)  # (N,)
+    
+    # 2. Vectorized Dissonance Calculation
+    dissonance = np.zeros(N)
+    for i in range(N):
+        bi = b[i]
+        sum_bi = np.sum(bi)
+        if sum_bi == 0:
+            dissonance[i] = 0
+            continue
+            
+        bi_col = bi[:, np.newaxis]
+        bi_row = bi[np.newaxis, :]
+        sum_pairs = bi_col + bi_row
+        diff_pairs = np.abs(bi_col - bi_row)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            bal = 1.0 - (diff_pairs / sum_pairs)
+            bal[sum_pairs == 0] = 1.0
+            
+        weighted_bal = bi_row * bal  # (K, K)
+        np.fill_diagonal(weighted_bal, 0.0)
+        
+        numerator_k = np.sum(weighted_bal, axis=1)  # (K,)
+        denominator_k = sum_bi - bi  # (K,)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            diss_k = numerator_k / denominator_k
+            diss_k[denominator_k == 0] = 0.0
+            
+        dissonance[i] = np.sum(bi * diss_k)
+        
+    weights = u * (1.0 - dissonance)
+    return weights
 
 
 def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 / 75,
@@ -24,7 +69,7 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
                        sinkhorn_eps=0.05, sinkhorn_col_weights='train_freq',
                        buffer_clusterer='kmeans', min_cluster_size=10,
                        features_path='features_epic.npz', split_path='class_split_epic.json',
-                       verbose=True):
+                       verbose=True, feature_mode='multimodal'):
     """Defaults here diverge from nac/stage2.py's UCF101/HMDB51 defaults in one
     place: sinkhorn_eps=0.05 + sinkhorn_col_weights='train_freq' (vs eps=0.3,
     uniform there). UCF101/HMDB51 are curated to near-equal per-class sizes, so
@@ -44,8 +89,11 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
     bug in the assignment rule (verified: both greedy and reweighted-Sinkhorn
     give similarly weak noun known-accuracy)."""
     assert label_space in ('verb', 'noun')
+    assert feature_mode in ('videomae', 'multimodal')
     d = np.load(features_path, allow_pickle=True)
     feats_raw = d['features']
+    if feature_mode == 'videomae':
+        feats_raw = feats_raw[:, :768]
     labels = d[f'{label_space}_class']
     keep = d[f'{label_space}_keep']
     video_ids = d['video_id']
@@ -133,13 +181,14 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
     D2s = dist2(Xs, C1)
     pred_nearest = D2s.argmin(1)
 
-    def discover(buffer_idx, pred_base):
+    def discover(buffer_idx, pred_base, weights=None):
         out = pred_base.copy()
         new_centroids = None
         if buffer_mode == 'alone':
             out[buffer_idx], new_ids, new_centroids = discover_from_buffer(
                 Xs[buffer_idx], C1, radii, n_unseen, merge=merge,
-                clusterer=buffer_clusterer, min_cluster_size=min_cluster_size)
+                clusterer=buffer_clusterer, min_cluster_size=min_cluster_size,
+                weights=weights)
         elif buffer_mode == 'anchored':
             acc_m = np.ones(len(Xs), bool)
             acc_m[buffer_idx] = False
@@ -200,14 +249,41 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
                 'centroids': np.concatenate([C1, new_centroids], axis=0) if len(new_ids) else C1,
                 'new_cluster_ids': new_ids,
                 'sn_map': sn_map,
-                'head_state': {k: v.cpu().clone() for k, v in head.state_dict().items()},
+                'head_state': {k: v.cpu().clone() for k, v in (head.module if isinstance(head, torch.nn.DataParallel) else head).state_dict().items()},
                 'head_in_dim': feats.shape[1], 'head_n_classes': N1,
                 'mu': mu, 'sig': sig, 'tau': float(tau),
                 'radii': radii, 'NK': NK, 'N1': N1,
             }
+        elif name == 'dear_weighted_reject':
+            free_m = assign1 >= NK
+            Xd = np.concatenate([feats[train_idx], feats[phase1_idx][free_m]])
+            yd = np.concatenate([y_lab, assign1[free_m]])
+            mu, sig = Xd.mean(0), Xd.std(0) + 1e-6
+            loss = make_edl_loss(N1, total_epoch=gate_epochs)
+            ckpt_path = f"checkpoint_stage2_{label_space}_dear_reject_seed0.pt"
+            
+            X_val_loss = (feats[ho1] - mu) / sig if len(ho1) else None
+            y_val_loss = ho1_cls if len(ho1) else None
+            
+            head, history = train_head(
+                (Xd - mu) / sig, yd, N1, loss, epochs=gate_epochs, seed=0, checkpoint_path=ckpt_path,
+                X_val_loss=X_val_loss, y_val_loss=y_val_loss
+            )
+            
+            u_ho = vacuity(predict_alpha(head, (feats[ho1] - mu) / sig), N1) if len(ho1) else np.array([], dtype=float)
+            tau = float(np.percentile(u_ho, calib_q)) if u_ho.size else float('inf')
+            alpha_s = predict_alpha(head, (Xs - mu) / sig)
+            u_s = vacuity(alpha_s, N1)
+            pred_base = alpha_s.argmax(1).cpu().numpy()
+            rej = u_s > tau
+            
+            alpha_np = alpha_s.cpu().numpy()
+            weights = compute_evidential_weights(alpha_np)
+            
+            rejected_indices = np.where(rej)[0]
+            pred, new_ids, new_centroids = discover(rejected_indices, pred_base, weights=weights[rejected_indices])
+            evaluate(pred, np.isin(pred, new_ids), new_ids, name)
         elif name == 'standard_classifier':
-            import torch.nn as nn
-            import torch
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             loss_fn = lambda logits, target, epoch: nn.CrossEntropyLoss()(logits, target)
             ckpt_path = f"checkpoint_stage2_{label_space}_{name}_seed0.pt"

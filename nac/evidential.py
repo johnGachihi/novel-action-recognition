@@ -104,7 +104,9 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
         print(f"Loading checkpoint from {checkpoint_path}...")
         try:
             ckpt = torch.load(checkpoint_path, map_location=device)
-            head.load_state_dict(ckpt['head_state_dict'])
+            state_dict = ckpt['head_state_dict']
+            state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+            head.load_state_dict(state_dict)
             opt.load_state_dict(ckpt['opt_state_dict'])
             start_epoch = ckpt['epoch'] + 1
             if 'history' in ckpt:
@@ -112,6 +114,14 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
             print(f"Resuming training from epoch {start_epoch}")
         except Exception as e:
             print(f"Failed to load checkpoint: {e}. Starting from scratch.")
+
+    num_gpus = torch.cuda.device_count()
+    is_dp = False
+    if num_gpus > 1 and device != 'cpu':
+        device_ids = list(range(num_gpus))
+        print(f"Using DataParallel on {num_gpus} GPUs for LinearHead: {device_ids}")
+        head = torch.nn.DataParallel(head, device_ids=device_ids)
+        is_dp = True
 
     X_t = torch.tensor(X, dtype=torch.float32)
     y_t = torch.tensor(y, dtype=torch.long)
@@ -161,7 +171,7 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
             
             if checkpoint_path is not None:
                 torch.save({
-                    'head_state_dict': head.state_dict(),
+                    'head_state_dict': head.module.state_dict() if is_dp else head.state_dict(),
                     'opt_state_dict': opt.state_dict(),
                     'epoch': epoch,
                     'history': history

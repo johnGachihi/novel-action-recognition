@@ -32,6 +32,26 @@ def plain_kmeans(X, k, iters=50, seed=1):
     return C, np.argmin(dist2(X, C), axis=1)
 
 
+def weighted_kmeans(X, k, weights, iters=50, seed=1):
+    if k <= 0 or len(X) == 0:
+        empty_assign = np.zeros(len(X), dtype=int)
+        return np.empty((0, X.shape[1])), empty_assign
+    w = np.clip(weights, 1e-6, 1.0)
+    r = np.random.default_rng(seed)
+    p = w / w.sum()
+    idx = r.choice(len(X), size=k, replace=False, p=p)
+    C = X[idx].copy()
+    for _ in range(iters):
+        a = np.argmin(dist2(X, C), axis=1)
+        for j in range(k):
+            mask = a == j
+            if mask.any():
+                C[j] = np.sum(X[mask] * w[mask][:, None], axis=0) / np.sum(w[mask])
+            else:
+                C[j] = X[np.argmax(np.min(dist2(X, C), axis=1))]
+    return C, np.argmin(dist2(X, C), axis=1)
+
+
 def sinkhorn_assign(D2, eps=0.05, iters=100, col_weights=None):
     """Balanced hard assignment via entropic optimal transport (Sinkhorn-Knopp,
     log-domain), as used for pseudo-labeling in UNO (Fini et al., ICCV 2021).
@@ -164,7 +184,8 @@ def rejection_radii(C, n_known, feats, calib_known_idx, calib_known_cls,
 
 
 def discover_from_buffer(Xb, C_existing, radii, n_new, merge='spacing', seed=1,
-                         clusterer='kmeans', min_cluster_size=10, hdbscan_pca=50):
+                         clusterer='kmeans', min_cluster_size=10, hdbscan_pca=50,
+                         weights=None):
     """Cluster a rejected buffer alone, then merge whole clusters back into existing
     centroids. merge='spacing' (correct): merge when the new centroid sits within
     half the nearest inter-centroid spacing — cluster MEANS are far closer to existing
@@ -184,7 +205,10 @@ def discover_from_buffer(Xb, C_existing, radii, n_new, merge='spacing', seed=1,
     if len(Xb) == 0:
         return np.array([], dtype=int), [], np.empty((0, C_existing.shape[1]))
     if clusterer == 'kmeans':
-        Cn, asn = plain_kmeans(Xb, n_new, seed=seed)
+        if weights is not None:
+            Cn, asn = weighted_kmeans(Xb, n_new, weights=weights, seed=seed)
+        else:
+            Cn, asn = plain_kmeans(Xb, n_new, seed=seed)
     elif clusterer == 'hdbscan':
         from sklearn.cluster import HDBSCAN
         Xc = Xb

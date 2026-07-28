@@ -22,11 +22,14 @@ ALL_METHODS = ['cosine', 'mahalanobis', 'standard_classifier'] + list(EVIDENTIAL
 
 def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
                     features_path='features_epic.npz', split_path='class_split_epic.json',
-                    overrides=None, verbose=True):
+                    overrides=None, verbose=True, feature_mode='multimodal'):
     """label_space: 'verb' or 'noun'."""
     assert label_space in ('verb', 'noun')
+    assert feature_mode in ('videomae', 'multimodal')
     d = np.load(features_path, allow_pickle=True)
     feats = d['features']
+    if feature_mode == 'videomae':
+        feats = feats[:, :768]
     labels = d[f'{label_space}_class']
     keep = d[f'{label_space}_keep']
     video_ids = d['video_id']
