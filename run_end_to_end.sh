@@ -6,22 +6,22 @@
 #    ./run_end_to_end.sh [OPTIONS]
 #
 #  Options:
-#    --output-path PATH    Where to download raw videos (default: ./data/epic_kitchens_raw)
-#    --clips-dir PATH      Where clipped narrations will be stored
+#    --clips-dir PATH      Where to download/store pre-clipped narrations
 #                          (default: ./data/epic_kitchens_clips/clips)
-#    --participants LIST   Comma-separated participant IDs, e.g. P01,P02 (default: all)
+#    --participants LIST   Comma-separated participant IDs to download, e.g. P01,P02 (default: all)
 #    --label-space SPACE   verb | noun | all (default: all)
 #    --limit N             Smoke-test mode: cap at N narrations across all stages (default: no limit)
-#    --skip-download       Skip video download (raw videos already present)
-#    --skip-clipping       Skip per-narration clipping (clips already present)
+#    --hf-token TOKEN      HuggingFace token (or set HF_TOKEN env var). Optional for public repos.
+#    --skip-download       Skip HF clip download (clips already present in --clips-dir)
 #    --skip-extraction     Skip feature extraction (features_epic.npz already exists)
 #    --skip-eval           Skip evaluation stage
+#    --use-raw-download    Legacy: download full raw videos via Bristol server + ffmpeg clip instead of HF
 #    -h | --help           Show this help
 #
 #  Requirements:
-#    - python3 (>=3.9, stdlib only for download stage)
-#    - ffmpeg (for narration clipping)
-#    - uv or pip (for ML packages in extraction/eval stages)
+#    - python3 (>=3.9)
+#    - uv or pip (for ML packages)
+#    - ffmpeg (only when --use-raw-download is set)
 # =============================================================================
 set -euo pipefail
 
@@ -38,26 +38,33 @@ SKIP_DOWNLOAD=false
 SKIP_CLIPPING=false
 SKIP_EXTRACTION=false
 SKIP_EVAL=false
+USE_RAW_DOWNLOAD=false   # set to true to use the legacy Bristol raw-video path
 LIMIT=0          # 0 means no limit
+HF_TOKEN="${HF_TOKEN:-}"
 ANNOT_DIR="epic-kitchens-100-annotations"
 DL_SCRIPTS_DIR="epic-kitchens-download-scripts"
+HF_REPO="lightly-ai/epic-kitchens-100-clips"
+RUN="python3"   # overridden in step 1 (uv preferred); pre-init avoids set -u errors
 
 # ---------- parse args -------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --output-path)   RAW_DIR="$2";        shift 2 ;;
-        --clips-dir)     CLIPS_DIR="$2";      shift 2 ;;
-        --participants)  PARTICIPANTS="$2";   shift 2 ;;
-        --label-space)   LABEL_SPACE="$2";    shift 2 ;;
-        --skip-download)   SKIP_DOWNLOAD=true;   shift ;;
-        --skip-clipping)   SKIP_CLIPPING=true;   shift ;;
-        --skip-extraction) SKIP_EXTRACTION=true; shift ;;
-        --skip-eval)       SKIP_EVAL=true;        shift ;;
-        --limit)           LIMIT="$2";           shift 2 ;;
-        -h|--help) sed -n '3,15p' "$0" | sed 's/^#  \?//'; exit 0 ;;
+        --output-path)      RAW_DIR="$2";           shift 2 ;;
+        --clips-dir)        CLIPS_DIR="$2";         shift 2 ;;
+        --participants)     PARTICIPANTS="$2";      shift 2 ;;
+        --label-space)      LABEL_SPACE="$2";       shift 2 ;;
+        --skip-download)    SKIP_DOWNLOAD=true;     shift ;;
+        --skip-clipping)    SKIP_CLIPPING=true;     shift ;;
+        --skip-extraction)  SKIP_EXTRACTION=true;   shift ;;
+        --skip-eval)        SKIP_EVAL=true;         shift ;;
+        --use-raw-download) USE_RAW_DOWNLOAD=true;  shift ;;
+        --limit)            LIMIT="$2";             shift 2 ;;
+        --hf-token)         HF_TOKEN="$2";          shift 2 ;;
+        -h|--help) sed -n '3,26p' "$0" | sed 's/^#  \?//'; exit 0 ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
     esac
 done
+
 
 step() { echo -e "\n${BOLD}${BLUE}==== $* ====${NC}"; }
 ok()   { echo -e "${GREEN}✓ $*${NC}"; }
@@ -116,23 +123,28 @@ done
 ok "EPIC download scripts ready."
 
 # =============================================================================
-step "[3/5] Downloading EPIC-KITCHENS-100 videos"
+step "[3/5] Downloading pre-clipped EPIC-KITCHENS-100 narrations (HuggingFace)"
 # =============================================================================
 
-if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
-    warn "--skip-download set: skipping video download."
-else
-    echo "Downloading videos to: $RAW_DIR"
-    echo "(This is ~700 GB for all participants — use --participants P01,P02 to limit scope)"
+if [[ "$USE_RAW_DOWNLOAD" == "true" ]]; then
+    # -------------------------------------------------------------------------
+    # LEGACY PATH: download full raw videos from Bristol server, then clip.
+    # Only needed if you want uncompressed originals. Requires ffmpeg.
+    # -------------------------------------------------------------------------
+    warn "--use-raw-download: using legacy Bristol server + ffmpeg flow."
 
-    PARTICIPANT_ARG=""
-    [[ "$PARTICIPANTS" != "all" ]] && PARTICIPANT_ARG="--participants $PARTICIPANTS"
+    if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
+        warn "--skip-download set: skipping raw video download."
+    else
+        echo "Downloading raw videos to: $RAW_DIR"
+        echo "(This is ~700 GB for all participants — use --participants P01,P02 to limit scope)"
 
-    # In --limit mode, derive the minimal set of unique video_ids needed from the CSV
-    # and pass them as --specific-videos so only those files are fetched.
-    SPECIFIC_VIDEOS_ARG=""
-    if [[ "$LIMIT" -gt 0 ]]; then
-        SPECIFIC_VIDEOS=$(python3 - <<PYEOF
+        PARTICIPANT_ARG=""
+        [[ "$PARTICIPANTS" != "all" ]] && PARTICIPANT_ARG="--participants $PARTICIPANTS"
+
+        SPECIFIC_VIDEOS_ARG=""
+        if [[ "$LIMIT" -gt 0 ]]; then
+            SPECIFIC_VIDEOS=$(python3 - <<PYEOF
 import csv
 rows = list(csv.DictReader(open("$ANNOT_DIR/EPIC_100_train.csv")))
 seen_vids, seen_narr = [], set()
@@ -145,41 +157,121 @@ for r in rows:
 print(','.join(seen_vids))
 PYEOF
 )
-        SPECIFIC_VIDEOS_ARG="--specific-videos $SPECIFIC_VIDEOS"
-        warn "--limit $LIMIT: downloading only videos: $SPECIFIC_VIDEOS"
+            SPECIFIC_VIDEOS_ARG="--specific-videos $SPECIFIC_VIDEOS"
+            warn "--limit $LIMIT: downloading only videos: $SPECIFIC_VIDEOS"
+        fi
+
+        ABS_RAW_DIR="$(cd "$(dirname "$RAW_DIR")" 2>/dev/null && pwd)/$(basename "$RAW_DIR")" || ABS_RAW_DIR="$PWD/$RAW_DIR"
+        mkdir -p "$ABS_RAW_DIR"
+        (
+            cd "$DL_SCRIPTS_DIR"
+            python3 epic_downloader.py \
+                --videos \
+                --output-path "$ABS_RAW_DIR" \
+                --train \
+                $PARTICIPANT_ARG \
+                $SPECIFIC_VIDEOS_ARG \
+                || exit 1
+        ) || die "Video download failed."
+        ok "Raw video download complete."
     fi
 
-    # The downloader resolves its metadata CSVs relative to its own cwd,
-    # so we must cd into the scripts dir. We pass an absolute output path so
-    # files land in the right place regardless of cwd.
-    ABS_RAW_DIR="$(cd "$(dirname "$RAW_DIR")" 2>/dev/null && pwd)/$(basename "$RAW_DIR")" || ABS_RAW_DIR="$PWD/$RAW_DIR"
-    mkdir -p "$ABS_RAW_DIR"
+else
+    # -------------------------------------------------------------------------
+    # DEFAULT PATH: download pre-clipped narrations directly from HuggingFace.
+    # Much faster — no ffmpeg needed, no 700 GB raw videos.
+    # -------------------------------------------------------------------------
+    SKIP_CLIPPING=true   # no clipping needed — HF already has per-narration clips
 
-    # --extension-only: download only the EPIC-100 new videos, not EPIC-55 re-runs
-    (
-        cd "$DL_SCRIPTS_DIR"
-        python3 epic_downloader.py \
-            --videos \
-            --extension-only \
-            --output-path "$ABS_RAW_DIR" \
-            --train \
-            $PARTICIPANT_ARG \
-            $SPECIFIC_VIDEOS_ARG \
-            || exit 1
-    ) || die "Video download failed."
-    ok "Video download complete."
+    if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
+        warn "--skip-download set: skipping HF clip download."
+        IFS=',' read -r -a clip_dirs_arr <<< "$CLIPS_DIR"
+        clip_count=$(find "${clip_dirs_arr[@]}" -name '*.mp4' 2>/dev/null | wc -l)
+        [[ "$clip_count" -eq 0 ]] && die "No clips found in $CLIPS_DIR. Remove --skip-download or point --clips-dir at existing clips."
+        ok "Using $clip_count existing clips in $CLIPS_DIR."
+    else
+        mkdir -p "$CLIPS_DIR"
+        echo "Downloading pre-clipped narrations from HuggingFace: $HF_REPO"
+        echo "Target: $CLIPS_DIR"
+
+        HF_TOKEN_ARG=""
+        [[ -n "$HF_TOKEN" ]] && HF_TOKEN_ARG="--token $HF_TOKEN"
+
+        # Build allow-patterns: restrict to specific participants if requested
+        ALLOW_PATTERNS="clips/P*/*.mp4"
+        PARTICIPANT_FILTER=""
+        if [[ "$PARTICIPANTS" != "all" ]]; then
+            IFS=',' read -r -a parts_arr <<< "$PARTICIPANTS"
+            patterns=$(printf "clips/%s/*.mp4 " "${parts_arr[@]}")
+            ALLOW_PATTERNS="$patterns"
+            warn "Downloading only participants: $PARTICIPANTS"
+        fi
+
+        # Use huggingface_hub to download — install it if missing
+        $RUN - <<PYEOF
+import sys, subprocess
+try:
+    import huggingface_hub
+except ImportError:
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'huggingface_hub', '-q'])
+    import huggingface_hub
+
+from huggingface_hub import snapshot_download
+import os, csv
+
+repo_id   = "$HF_REPO"
+clips_dir = "$CLIPS_DIR"
+token     = "$HF_TOKEN" or None
+limit     = $LIMIT
+participants = "$PARTICIPANTS"
+
+# Build allow_patterns
+if participants == 'all':
+    if limit > 0:
+        # Only download participants needed for the first `limit` narrations
+        rows = list(csv.DictReader(open("$ANNOT_DIR/EPIC_100_train.csv")))[:limit]
+        needed_pids = sorted({r['participant_id'] for r in rows})
+        print(f"Smoke-test: downloading participants {needed_pids} (covers first {limit} narrations)")
+        patterns = [f"clips/{p}/*.mp4" for p in needed_pids]
+    else:
+        patterns = ["clips/P*/*.mp4"]
+else:
+    patterns = [f"clips/{p.strip()}/*.mp4" for p in participants.split(',')]
+
+print(f"Downloading with patterns: {patterns}")
+
+local_dir = os.path.dirname(clips_dir)  # parent of 'clips/'
+os.makedirs(local_dir, exist_ok=True)
+
+snapshot_download(
+    repo_id=repo_id,
+    repo_type="dataset",
+    local_dir=local_dir,
+    allow_patterns=patterns,
+    token=token,
+    ignore_patterns=["*.json", "*.csv", "README*"],
+)
+
+# Count what we got
+import glob
+mp4s = glob.glob(f"{clips_dir}/*/*.mp4")
+print(f"\nDownload complete: {len(mp4s)} clips in {clips_dir}")
+if limit > 0 and len(mp4s) == 0:
+    print("WARNING: 0 clips downloaded. Check your HF token or network.")
+    sys.exit(1)
+PYEOF
+        ok "HuggingFace clip download complete."
+    fi
 fi
 
 # =============================================================================
-step "[4/5] Clipping per-narration segments from full videos"
+step "[4/5] Per-narration clipping (legacy --use-raw-download only)"
 # =============================================================================
 
 if [[ "$SKIP_CLIPPING" == "true" ]]; then
-    warn "--skip-clipping set: skipping narration clipping."
-    clip_count=$(find "$CLIPS_DIR" -name '*.mp4' 2>/dev/null | wc -l)
-    [[ "$clip_count" -eq 0 ]] && die "No clips found in $CLIPS_DIR and --skip-clipping is set."
-    ok "Using $clip_count existing clips."
+    warn "Clipping step skipped (HF pre-clipped mode or --skip-clipping set)."
 else
+    # This path is only reached when --use-raw-download is set and --skip-clipping is not.
     command -v ffmpeg &>/dev/null || die "ffmpeg is required for clipping but was not found. Install it with: sudo apt install ffmpeg"
 
     mkdir -p "$CLIPS_DIR"
@@ -246,9 +338,16 @@ for i, row in enumerate(rows):
         print(f"  Progress: {i+1}/{total} — clipped={done} skipped={skipped} failed={failed}", flush=True)
 
 print(f"\nClipping complete: clipped={done}  skipped={skipped}  failed={failed}")
-if failed > 0:
+if done == 0 and skipped == 0:
+    print(f"ERROR: 0 clips produced — {failed} source videos not found.")
+    print(f"  Searched under: {raw_root}")
+    print(f"  Expected layout: {raw_root}/<participant>/videos/<video_id>.MP4")
+    import sys; sys.exit(1)
+elif failed > 0:
     print(f"WARNING: {failed} narrations could not be clipped (source video not found).")
 PYEOF
+    rc=$?
+    [[ $rc -ne 0 ]] && die "Clipping produced 0 clips. Check that the download completed and the path layout is correct."
 
     ok "Clipping complete."
 fi
@@ -257,7 +356,8 @@ fi
 step "[4b/5] Pre-flight check"
 # =============================================================================
 
-clip_count=$(find "$CLIPS_DIR" -name '*.mp4' 2>/dev/null | wc -l)
+IFS=',' read -r -a clip_dirs_arr <<< "$CLIPS_DIR"
+clip_count=$(find "${clip_dirs_arr[@]}" -name '*.mp4' 2>/dev/null | wc -l)
 [[ "$clip_count" -eq 0 ]] && die "No .mp4 clips found in $CLIPS_DIR."
 ok "Found $clip_count clips."
 
@@ -293,6 +393,15 @@ if [[ "$SKIP_EVAL" == "true" ]]; then
     warn "--skip-eval set: skipping evaluation."
 else
     $RUN evaluate_pipeline.py --label-space "$LABEL_SPACE" --out evaluation_results.json
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      if [[ "$LABEL_SPACE" == "all" ]]; then
+        warn "Evaluation failed for label-space 'all'; retrying with '--label-space verb'..."
+        $RUN evaluate_pipeline.py --label-space verb --out evaluation_results.json || die "Evaluation failed again."
+      else
+        die "Evaluation failed."
+      fi
+    fi
     ok "Evaluation complete → evaluation_results.json"
 fi
 

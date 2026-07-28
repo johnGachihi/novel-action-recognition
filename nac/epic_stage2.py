@@ -166,11 +166,11 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
             Xd = np.concatenate([feats[train_idx], feats[phase1_idx][free_m]])
             yd = np.concatenate([y_lab, assign1[free_m]])
             mu, sig = Xd.mean(0), Xd.std(0) + 1e-6
-            loss = make_edl_loss(N1, total_epoch=gate_epochs)
+            loss = make_edl_loss(N1, total_epoch=gate_epochs)  # DEAR best config
             ckpt_path = f"checkpoint_stage2_{label_space}_{name}_seed0.pt"
             head = train_head((Xd - mu) / sig, yd, N1, loss, epochs=gate_epochs, seed=0, checkpoint_path=ckpt_path)
-            u_ho = vacuity(predict_alpha(head, (feats[ho1] - mu) / sig), N1)
-            tau = np.percentile(u_ho, calib_q)
+            u_ho = vacuity(predict_alpha(head, (feats[ho1] - mu) / sig), N1) if len(ho1) else np.array([], dtype=float)
+            tau = float(np.percentile(u_ho, calib_q)) if u_ho.size else float('inf')
             alpha_s = predict_alpha(head, (Xs - mu) / sig)
             u_s = vacuity(alpha_s, N1)
             pred_base = alpha_s.argmax(1).cpu().numpy()

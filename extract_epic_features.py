@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
-from transformers import VideoMAEImageProcessor, VideoMAEModel, ASTFeatureExtractor, ASTModel
+from transformers import VideoMAEImageProcessor, VideoMAEModel, ASTFeatureExtractor, ASTForAudioClassification
 
 from nac.epic_data import load_epic_manifest
 
@@ -176,15 +176,20 @@ def main():
         merge_and_save(df, feats_done, narr_done)
         return
 
-    processor = VideoMAEImageProcessor.from_pretrained('MCG-NJU/videomae-base')
-    model = VideoMAEModel.from_pretrained('MCG-NJU/videomae-base').to(DEVICE).eval()
+    hf_token = os.environ.get('HF_TOKEN') or None
+
+    processor = VideoMAEImageProcessor.from_pretrained('MCG-NJU/videomae-base', token=hf_token)
+    model = VideoMAEModel.from_pretrained('MCG-NJU/videomae-base', token=hf_token).to(DEVICE).eval()
     for p in model.parameters():
         p.requires_grad_(False)
 
-    ast_extractor = ASTFeatureExtractor.from_pretrained('MIT/ast-finetuned-audioset-10-10-0.45')
-    ast_model = ASTModel.from_pretrained('MIT/ast-finetuned-audioset-10-10-0.45').to(DEVICE).eval()
+    AST_MODEL_ID = 'MIT/ast-finetuned-audioset-10-10-0.4593'
+    ast_extractor = ASTFeatureExtractor.from_pretrained(AST_MODEL_ID, token=hf_token)
+    _ast_full = ASTForAudioClassification.from_pretrained(AST_MODEL_ID, token=hf_token)
+    ast_model = _ast_full.audio_spectrogram_transformer.to(DEVICE).eval()  # base model only
     for p in ast_model.parameters():
         p.requires_grad_(False)
+    del _ast_full  # free classifier head weights
 
     ds = EpicFeatureDataset(remaining.path.tolist(), processor)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, collate_fn=collate,

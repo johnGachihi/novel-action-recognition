@@ -7,6 +7,7 @@ label-dtype-agnostic); only the data loading/splitting is EPIC-specific
 (video_id grouping instead of UCF101/HMDB51 clip grouping).
 """
 import json
+import math
 
 import numpy as np
 
@@ -43,11 +44,12 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
     known_idx_pool = np.where(known)[0]
     train_idx, heldout_idx = known_train_heldout(known_classes, labels, video_ids, rng)
     eval_idx = np.concatenate([heldout_idx, np.where(novel)[0]])
-    is_novel = np.concatenate([np.zeros(len(heldout_idx)), np.ones(novel.sum())])
+    is_novel = np.concatenate([np.zeros(len(heldout_idx)), np.ones(int(novel.sum()))])
     true_idx = np.array([cls_to_idx[c] for c in labels[heldout_idx]])
     nh = len(heldout_idx)
+    novel_count = int(novel.sum())
     if verbose:
-        print(f"[EPIC:{label_space}] K={K} train={len(train_idx)} heldout={nh} novel={int(novel.sum())}")
+        print(f"[EPIC:{label_space}] K={K} train={len(train_idx)} heldout={nh} novel={novel_count}")
 
     mu, sigma = feats[train_idx].mean(0), feats[train_idx].std(0) + 1e-6
     X_train = (feats[train_idx] - mu) / sigma
@@ -56,27 +58,41 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
 
     results = {}
 
-    def record(name, novelty, pred):
-        results[name] = {
-            'auroc': float(roc_auc_score(is_novel, novelty)),
-            'closed_set_acc': float((true_idx == pred[:nh]).mean()),
-        }
-        if verbose:
-            r = results[name]
-            print(f"  {name:16s}  AUROC={r['auroc']:.3f}   closed_set_acc={r['closed_set_acc']:.3f}")
+    def _safe_auroc(gt, scores):
+        if len(gt) and np.isfinite(scores).all() and gt.min() < gt.max():
+            try:
+                return float(roc_auc_score(gt, scores))
+            except Exception:
+                return float('nan')
+        return float('nan')
 
     for name in methods:
-        if name == 'cosine':
-            record(name, *cosine_prototype(feats, train_idx, eval_idx, labels, known_classes))
-        elif name == 'mahalanobis':
-            record(name, *mahalanobis(feats, train_idx, eval_idx, labels, known_classes))
+        if name in ('cosine', 'mahalanobis'):
+            novelty, pred = cosine_prototype(
+                feats, train_idx, eval_idx, labels, known_classes
+            ) if name == 'cosine' else mahalanobis(
+                feats, train_idx, eval_idx, labels, known_classes
+            )
         elif name in EVIDENTIAL_CONFIGS:
             cfg = {**EVIDENTIAL_CONFIGS[name], **(overrides or {}), 'total_epoch': epochs}
             loss = make_edl_loss(K, **cfg)
             ckpt_path = f"checkpoint_stage1_{label_space}_{name}_seed{seed}.pt"
             head = train_head(X_train, y_train, K, loss, epochs=epochs, seed=seed, checkpoint_path=ckpt_path)
             alpha = predict_alpha(head, X_eval, evidence=cfg['evidence'])
-            record(name, vacuity(alpha, K), alpha.argmax(1).cpu().numpy())
+            novelty = vacuity(alpha, K)
+            pred = alpha.argmax(1).cpu().numpy()
         else:
             raise ValueError(f"unknown method {name}")
+
+        metrics = {
+            'auroc': _safe_auroc(is_novel, novelty),
+            'closed_set_acc': float((true_idx == pred[:nh]).mean()) if nh else float('nan'),
+        }
+        results[name] = metrics
+
+        if verbose:
+            auroc = f"{metrics['auroc']:.3f}" if math.isfinite(metrics['auroc']) else "N/A"
+            cacc = f"{metrics['closed_set_acc']:.3f}" if math.isfinite(metrics['closed_set_acc']) else "N/A"
+            print(f"  {name:16s}  AUROC={auroc:>7}   closed_set_acc={cacc}")
+
     return results

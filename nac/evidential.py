@@ -137,6 +137,13 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
 @torch.no_grad()
 def predict_alpha(head, X, evidence='exp', batch_size=8192, device=None):
     device = device or next(head.parameters()).device
+    if len(X) == 0:
+        out_dim = None
+        for p in head.parameters():
+            if p.dim() == 2:
+                out_dim = p.shape[0]
+                break
+        return torch.empty(0, out_dim or 1, device=device)
     out = []
     for i in range(0, len(X), batch_size):
         logits = head(torch.tensor(X[i:i + batch_size], dtype=torch.float32).to(device))

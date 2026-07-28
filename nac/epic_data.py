@@ -24,7 +24,15 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
     plus per-label-space 'keep' masks for classes with >= min_count samples
     (the long tail: 12/89 present verb classes and 88/251 present noun classes
     fall below 20 samples and can't support a train/heldout/novel-eval split)."""
-    files = glob.glob(f'{clips_root}/*/*.mp4')
+    if isinstance(clips_root, str):
+        clips_roots = [r.strip() for r in clips_root.split(',')]
+    else:
+        clips_roots = clips_root
+        
+    files = []
+    for root in clips_roots:
+        files.extend(glob.glob(f'{root}/*/*.mp4'))
+        
     ids_to_path = {os.path.basename(f)[:-4]: f for f in files}
     df = pd.read_csv(annot_path)
     df = df[df.narration_id.isin(ids_to_path)].copy()
@@ -90,11 +98,12 @@ def known_train_heldout(classes, labels, video_ids, rng, frac=0.8):
         tr, ho = _split_units(idx, video_ids, rng, lambda n: [int(frac * n)])
         train += tr
         heldout += ho
-    return np.array(train), np.array(heldout)
+    return np.array(train, dtype=int), np.array(heldout, dtype=int)
 
 
 def known_three_way(classes, labels, video_ids, rng, frac=0.8):
     """Stage-2 split: train / phase-1 heldout / phase-2 heldout, group-aware.
+
     Mirrors nac/data.py::known_three_way (same integer cut arithmetic:
     sp = int(frac*n), sp2 = sp + (n-sp)//2 -- NOT frac-derived, required for
     exact reproducibility of the heldout split sizes)."""
@@ -110,7 +119,7 @@ def known_three_way(classes, labels, video_ids, rng, frac=0.8):
         train += tr
         ho1 += h1
         ho2 += h2
-    return np.array(train), np.array(ho1), np.array(ho2)
+    return np.array(train, dtype=int), np.array(ho1, dtype=int), np.array(ho2, dtype=int)
 
 
 def novel_phase_split(novel_classes, labels, rng, n_seen):
@@ -130,4 +139,4 @@ def novel_phase_split(novel_classes, labels, rng, n_seen):
             sn2 += list(idx[half:])
         else:
             un2 += list(idx)
-    return seen, np.array(sn1), np.array(sn2), np.array(un2)
+    return seen, np.array(sn1, dtype=int), np.array(sn2, dtype=int), np.array(un2, dtype=int)

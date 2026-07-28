@@ -5,12 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "huggingface_hub",
     "numpy",
     "opencv-python",
     "pandas",
+    "pillow",
     "scikit-learn",
     "scipy",
     "torch",
     "torchaudio",
+    "torchvision",
     "transformers",
 ]

@@ -6,6 +6,8 @@ from .geometry import dist2
 
 
 def kmeanspp_init(X, k, seed=0):
+    if len(X) == 0 or k <= 0:
+        return np.empty((0, X.shape[1]))
     r = np.random.default_rng(seed)
     cent = [X[r.integers(len(X))]]
     for _ in range(k - 1):
@@ -16,6 +18,9 @@ def kmeanspp_init(X, k, seed=0):
 
 
 def plain_kmeans(X, k, iters=50, seed=1):
+    if k <= 0 or len(X) == 0:
+        empty_assign = np.zeros(len(X), dtype=int)
+        return np.empty((0, X.shape[1])), empty_assign
     C = kmeanspp_init(X, k, seed)
     for _ in range(iters):
         a = np.argmin(dist2(X, C), axis=1)
@@ -74,6 +79,11 @@ def semisup_kmeans(X_lab, y_lab, X_unl, anchored_centroids, n_free, iters=50, se
     (EPIC verb/noun) where uniform mass forces severe misassignment onto
     over-represented known classes (see sinkhorn_assign's docstring)."""
     n_anch = len(anchored_centroids)
+    if len(X_unl) == 0:
+        empty_assign = np.zeros(0, dtype=int)
+        return np.concatenate([anchored_centroids, np.empty((0, X_lab.shape[1]))]), empty_assign
+
+    n_free = min(n_free, len(X_unl))
     C = np.concatenate([anchored_centroids, kmeanspp_init(X_unl, n_free, seed)])
     lab_sums = np.zeros_like(anchored_centroids)
     lab_counts = np.zeros(n_anch)
@@ -140,7 +150,14 @@ def rejection_radii(C, n_known, feats, calib_known_idx, calib_known_cls,
             dd = np.linalg.norm(member - C[k], axis=1)
             radii[k] = np.percentile(dd, q)
             pool.append(dd)
-    radii[radii == 0] = np.percentile(np.concatenate(pool), q)
+
+    fallback = None
+    if pool:
+        fallback = np.percentile(np.concatenate(pool), q)
+    elif len(feats):
+        fallback = float(np.percentile(np.linalg.norm(feats - feats.mean(0), axis=1), q))
+    if fallback is not None:
+        radii[radii == 0] = fallback
     return radii
 
 
@@ -162,6 +179,8 @@ def discover_from_buffer(Xb, C_existing, radii, n_new, merge='spacing', seed=1,
     (non-merged) categories, needed to classify brand-new samples later without
     re-running discovery (e.g. for live inference against a saved checkpoint)."""
     N1 = len(C_existing)
+    if len(Xb) == 0:
+        return np.array([], dtype=int), [], np.empty((0, C_existing.shape[1]))
     if clusterer == 'kmeans':
         Cn, asn = plain_kmeans(Xb, n_new, seed=seed)
     elif clusterer == 'hdbscan':
