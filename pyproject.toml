@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "huggingface_hub",
+    "matplotlib",
     "numpy",
     "opencv-python",
     "pandas",

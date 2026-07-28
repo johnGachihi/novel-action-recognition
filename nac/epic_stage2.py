@@ -11,11 +11,11 @@ import numpy as np
 from .clustering import (discover_from_buffer, dpmeans_online, rejection_radii,
                          semisup_kmeans)
 from .epic_data import known_three_way, novel_phase_split
-from .evidential import make_edl_loss, predict_alpha, train_head, vacuity
+from .evidential import LinearHead, make_edl_loss, predict_alpha, train_head, vacuity
 from .geometry import dist2, fit_whitener
 from .metrics import hungarian_acc, normalized_mutual_info_score
 
-ALL_METHODS = ['closed_world', 'dist_reject', 'dpmeans', 'dear_reject']
+ALL_METHODS = ['closed_world', 'dist_reject', 'dpmeans', 'dear_reject', 'standard_classifier']
 
 
 def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 / 75,
@@ -112,7 +112,7 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
             'known_acc': float(np.mean(pred_cluster[km] == np.array([known_to_idx[c] for c in s_true[km]]))),
             'seen_novel_acc': float(np.mean([sn_map.get(t, -1) == c
                                              for t, c in zip(s_true[sm], pred_cluster[sm])])),
-            'unseen_detect_recall': float(is_new[um].mean()),
+            'unseen_detect_recall': float(is_new[um].mean()) if um.any() else float('nan'),
             'false_new_rate': float(is_new[km | sm].mean()),
             'n_new_categories': len(new_ids),
         }
@@ -121,6 +121,10 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
             acc, _ = hungarian_acc(s_true[m], pred_cluster[m] - N1, len(new_ids))
             r['new_cat_hungarian_acc'] = float(acc)
             r['new_cat_nmi'] = float(normalized_mutual_info_score(s_true[m], pred_cluster[m]))
+            
+        n_clusters_max = int(max(pred_cluster)) + 1 if len(pred_cluster) else 0
+        overall_acc, _ = hungarian_acc(s_true, pred_cluster, max(n_clusters_max, 100))
+        r['overall_hungarian_acc'] = float(overall_acc)
         results[name] = r
         if verbose:
             print(f"  {name:18s} " + "  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
@@ -150,9 +154,12 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
         return out, new_ids, new_centroids
 
     checkpoint = None
+    stream_predictions = {}
+    history_stage2 = None
     for name in methods:
         if name == 'closed_world':
-            evaluate(pred_nearest, np.zeros(len(Xs), bool), [], name)
+            pred = pred_nearest
+            evaluate(pred, np.zeros(len(Xs), bool), [], name)
         elif name == 'dist_reject':
             rej = np.sqrt(D2s.min(1)) > radii[pred_nearest]
             pred, new_ids, _ = discover(np.where(rej)[0], pred_nearest)
@@ -168,7 +175,17 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
             mu, sig = Xd.mean(0), Xd.std(0) + 1e-6
             loss = make_edl_loss(N1, total_epoch=gate_epochs)  # DEAR best config
             ckpt_path = f"checkpoint_stage2_{label_space}_{name}_seed0.pt"
-            head = train_head((Xd - mu) / sig, yd, N1, loss, epochs=gate_epochs, seed=0, checkpoint_path=ckpt_path)
+            
+            # Prepare validation data (calibration set ho1)
+            X_val_loss = (feats[ho1] - mu) / sig if len(ho1) else None
+            y_val_loss = ho1_cls if len(ho1) else None
+            
+            head, history = train_head(
+                (Xd - mu) / sig, yd, N1, loss, epochs=gate_epochs, seed=0, checkpoint_path=ckpt_path,
+                X_val_loss=X_val_loss, y_val_loss=y_val_loss
+            )
+            history_stage2 = history
+
             u_ho = vacuity(predict_alpha(head, (feats[ho1] - mu) / sig), N1) if len(ho1) else np.array([], dtype=float)
             tau = float(np.percentile(u_ho, calib_q)) if u_ho.size else float('inf')
             alpha_s = predict_alpha(head, (Xs - mu) / sig)
@@ -188,9 +205,37 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
                 'mu': mu, 'sig': sig, 'tau': float(tau),
                 'radii': radii, 'NK': NK, 'N1': N1,
             }
+        elif name == 'standard_classifier':
+            import torch.nn as nn
+            import torch
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            loss_fn = lambda logits, target, epoch: nn.CrossEntropyLoss()(logits, target)
+            ckpt_path = f"checkpoint_stage2_{label_space}_{name}_seed0.pt"
+            
+            head = LinearHead(feats.shape[1], NK).to(device)
+            head, history = train_head(
+                feats[train_idx], y_lab, NK, loss_fn, epochs=gate_epochs, seed=0, checkpoint_path=ckpt_path,
+                X_val_loss=feats[ho1] if len(ho1) else None, y_val_loss=ho1_cls if len(ho1) else None,
+                device=device
+            )
+            history_stage2 = history
+            
+            head.eval()
+            with torch.no_grad():
+                logits = head(torch.tensor(Xs, dtype=torch.float32).to(device))
+                pred = logits.argmax(1).cpu().numpy()
+            
+            evaluate(pred, np.zeros(len(Xs), bool), [], name)
         else:
             raise ValueError(f"unknown method {name}")
+            
+        stream_predictions[name] = pred.tolist()
 
     return {'phase1': {'known_acc': p1_known_acc, 'seen_novel_hungarian_acc': float(sn_acc),
                        'novel_to_free_rate': frac_free},
-            'phase2': results, 'checkpoint': checkpoint}
+            'phase2': results, 'checkpoint': checkpoint,
+            'stream_feats': Xs.tolist(),
+            'stream_type': stream_type.tolist(),
+            'stream_true_labels': s_true.tolist(),
+            'stream_predictions': stream_predictions,
+            'history': history_stage2}

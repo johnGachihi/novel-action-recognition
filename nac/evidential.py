@@ -90,12 +90,15 @@ def make_edl_loss(num_classes, loss_form='log', evidence='exp',
 
 
 def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
-               batch_size=256, seed=0, device=None, checkpoint_path=None):
+               batch_size=256, seed=0, device=None, checkpoint_path=None,
+               X_val_loss=None, y_val_loss=None, X_val_auroc=None, is_novel_val=None,
+               evidence='exp'):
     device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(seed)
     head = LinearHead(X.shape[1], num_classes).to(device)
     opt = torch.optim.Adam(head.parameters(), lr=lr, weight_decay=weight_decay)
 
+    history = {'train_loss': [], 'val_loss': [], 'val_auroc': []}
     start_epoch = 0
     if checkpoint_path is not None and os.path.exists(checkpoint_path):
         print(f"Loading checkpoint from {checkpoint_path}...")
@@ -104,6 +107,8 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
             head.load_state_dict(ckpt['head_state_dict'])
             opt.load_state_dict(ckpt['opt_state_dict'])
             start_epoch = ckpt['epoch'] + 1
+            if 'history' in ckpt:
+                history = ckpt['history']
             print(f"Resuming training from epoch {start_epoch}")
         except Exception as e:
             print(f"Failed to load checkpoint: {e}. Starting from scratch.")
@@ -112,26 +117,60 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
     y_t = torch.tensor(y, dtype=torch.long)
     n = len(X_t)
     
+    train_losses = history.setdefault('train_loss', [])
+    val_losses = history.setdefault('val_loss', [])
+    val_aurocs = history.setdefault('val_auroc', [])
+
     if start_epoch < epochs:
         for epoch in range(start_epoch, epochs):
+            head.train()
             perm = torch.randperm(n)
+            epoch_loss = 0.0
+            num_batches = 0
             for i in range(0, n, batch_size):
                 idx = perm[i:i + batch_size]
                 opt.zero_grad()
-                loss(head(X_t[idx].to(device)), y_t[idx].to(device), epoch).backward()
+                l = loss(head(X_t[idx].to(device)), y_t[idx].to(device), epoch)
+                l.backward()
                 opt.step()
+                epoch_loss += l.item()
+                num_batches += 1
+            train_losses.append(epoch_loss / max(1, num_batches))
+            
+            # Calculate validation loss if provided
+            if X_val_loss is not None and y_val_loss is not None:
+                head.eval()
+                with torch.no_grad():
+                    X_vl = torch.tensor(X_val_loss, dtype=torch.float32).to(device)
+                    y_vl = torch.tensor(y_val_loss, dtype=torch.long).to(device)
+                    val_l = loss(head(X_vl), y_vl, epoch).item()
+                val_losses.append(val_l)
+            
+            # Calculate validation AUROC if provided
+            if X_val_auroc is not None and is_novel_val is not None:
+                from sklearn.metrics import roc_auc_score
+                head.eval()
+                with torch.no_grad():
+                    alpha_val = predict_alpha(head, X_val_auroc, evidence=evidence, device=device)
+                    val_vacuity = (num_classes / alpha_val.sum(dim=1)).cpu().numpy()
+                    if len(is_novel_val) > 0 and len(np.unique(is_novel_val)) > 1 and np.isfinite(val_vacuity).all():
+                        val_auroc = float(roc_auc_score(is_novel_val, val_vacuity))
+                    else:
+                        val_auroc = float('nan')
+                val_aurocs.append(val_auroc)
             
             if checkpoint_path is not None:
                 torch.save({
                     'head_state_dict': head.state_dict(),
                     'opt_state_dict': opt.state_dict(),
-                    'epoch': epoch
+                    'epoch': epoch,
+                    'history': history
                 }, checkpoint_path)
     else:
         print("Model already fully trained. Loaded from checkpoint.")
 
     head.eval()
-    return head
+    return head, history
 
 
 @torch.no_grad()
@@ -147,7 +186,14 @@ def predict_alpha(head, X, evidence='exp', batch_size=8192, device=None):
     out = []
     for i in range(0, len(X), batch_size):
         logits = head(torch.tensor(X[i:i + batch_size], dtype=torch.float32).to(device))
-        out.append(evidence_fn(logits, evidence) + 1)
+        if evidence == 'msp':
+            probs = torch.softmax(logits, dim=1)
+            anomaly_score = 1.0 - probs.max(dim=1)[0]
+            val_col = 1.0 / torch.clamp(anomaly_score, min=1e-8)
+            alpha_row = val_col.unsqueeze(1).repeat(1, logits.shape[1])
+            out.append(alpha_row)
+        else:
+            out.append(evidence_fn(logits, evidence) + 1)
     alpha = torch.cat(out)
     return alpha
 
