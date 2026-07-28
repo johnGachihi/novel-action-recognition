@@ -15,6 +15,7 @@ epic-kitchens-download-scripts/
 # Shell scripts: local absolute paths and/or credentials (e.g. download_epic_resilient.sh's
 # HF_TOKEN) not meant to travel with the repo
 *.sh
+!run_end_to_end.sh
 
 # Run logs
 logs/
