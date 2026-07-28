@@ -113,8 +113,10 @@ def semisup_kmeans(X_lab, y_lab, X_unl, anchored_centroids, n_free, iters=50, se
         counts[:n_anch] += lab_counts
         empty = counts == 0
         if empty.any():  # re-seed dead free centroids at worst-explained points
-            far = np.argsort(np.min(dist2(X_unl, C), axis=1))[::-1][:empty.sum()]
-            newC[empty] = X_unl[far]
+            far = np.argsort(np.min(dist2(X_unl, C), axis=1))[::-1]
+            # Replicate worst-explained points if there are more empty centroids than samples
+            far_replicated = np.resize(far, empty.sum())
+            newC[empty] = X_unl[far_replicated]
             counts[empty] = 1
         C = newC / counts[:, None]
     return C, assign_fn(dist2(X_unl, C))
