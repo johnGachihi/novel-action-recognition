@@ -154,6 +154,12 @@ def main():
     df = load_epic_manifest(min_count=20)
     print(f"manifest: {len(df)} clips ({df.verb_keep.sum()} verb-kept, {df.noun_keep.sum()} noun-kept)")
 
+    # Smoke-test cap: honour EPIC_LIMIT env var set by run_end_to_end.sh --limit N
+    limit = int(os.environ.get('EPIC_LIMIT', 0))
+    if limit > 0:
+        df = df.head(limit).copy()
+        print(f"EPIC_LIMIT={limit}: capped manifest to {len(df)} narrations for smoke-test.")
+
     done_ids = set()
     feats_done, narr_done = [], []
     if os.path.exists(PARTIAL_PATH):

@@ -11,6 +11,7 @@
 #                          (default: ./data/epic_kitchens_clips/clips)
 #    --participants LIST   Comma-separated participant IDs, e.g. P01,P02 (default: all)
 #    --label-space SPACE   verb | noun | all (default: all)
+#    --limit N             Smoke-test mode: cap at N narrations across all stages (default: no limit)
 #    --skip-download       Skip video download (raw videos already present)
 #    --skip-clipping       Skip per-narration clipping (clips already present)
 #    --skip-extraction     Skip feature extraction (features_epic.npz already exists)
@@ -37,6 +38,7 @@ SKIP_DOWNLOAD=false
 SKIP_CLIPPING=false
 SKIP_EXTRACTION=false
 SKIP_EVAL=false
+LIMIT=0          # 0 means no limit
 ANNOT_DIR="epic-kitchens-100-annotations"
 DL_SCRIPTS_DIR="epic-kitchens-download-scripts"
 
@@ -51,7 +53,8 @@ while [[ $# -gt 0 ]]; do
         --skip-clipping)   SKIP_CLIPPING=true;   shift ;;
         --skip-extraction) SKIP_EXTRACTION=true; shift ;;
         --skip-eval)       SKIP_EVAL=true;        shift ;;
-        -h|--help) sed -n '3,14p' "$0" | sed 's/^#  \?//'; exit 0 ;;
+        --limit)           LIMIT="$2";           shift 2 ;;
+        -h|--help) sed -n '3,15p' "$0" | sed 's/^#  \?//'; exit 0 ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
     esac
 done
@@ -60,6 +63,8 @@ step() { echo -e "\n${BOLD}${BLUE}==== $* ====${NC}"; }
 ok()   { echo -e "${GREEN}✓ $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗ $*${NC}" >&2; exit 1; }
+
+[[ "$LIMIT" -gt 0 ]] && warn "Smoke-test mode: pipeline limited to $LIMIT narrations."
 
 # =============================================================================
 step "[1/5] Environment setup"
@@ -123,6 +128,27 @@ else
     PARTICIPANT_ARG=""
     [[ "$PARTICIPANTS" != "all" ]] && PARTICIPANT_ARG="--participants $PARTICIPANTS"
 
+    # In --limit mode, derive the minimal set of unique video_ids needed from the CSV
+    # and pass them as --specific-videos so only those files are fetched.
+    SPECIFIC_VIDEOS_ARG=""
+    if [[ "$LIMIT" -gt 0 ]]; then
+        SPECIFIC_VIDEOS=$(python3 - <<PYEOF
+import csv
+rows = list(csv.DictReader(open("$ANNOT_DIR/EPIC_100_train.csv")))
+seen_vids, seen_narr = [], set()
+for r in rows:
+    if r['video_id'] not in seen_narr:
+        seen_narr.add(r['video_id'])
+        seen_vids.append(r['video_id'])
+    if len(seen_vids) >= $LIMIT:
+        break
+print(','.join(seen_vids))
+PYEOF
+)
+        SPECIFIC_VIDEOS_ARG="--specific-videos $SPECIFIC_VIDEOS"
+        warn "--limit $LIMIT: downloading only videos: $SPECIFIC_VIDEOS"
+    fi
+
     # The downloader resolves its metadata CSVs relative to its own cwd,
     # so we must cd into the scripts dir. We pass an absolute output path so
     # files land in the right place regardless of cwd.
@@ -138,6 +164,7 @@ else
             --output-path "$ABS_RAW_DIR" \
             --train \
             $PARTICIPANT_ARG \
+            $SPECIFIC_VIDEOS_ARG \
             || exit 1
     ) || die "Video download failed."
     ok "Video download complete."
@@ -168,6 +195,10 @@ clips_root = "$CLIPS_DIR"
 
 with open(annot) as f:
     rows = list(csv.DictReader(f))
+
+limit = $LIMIT
+if limit > 0:
+    rows = rows[:limit]
 
 total = len(rows)
 done = skipped = failed = 0
@@ -250,7 +281,7 @@ if [[ "$SKIP_EXTRACTION" == "true" ]]; then
     [[ -f "features_epic.npz" ]] || die "features_epic.npz not found."
 else
     echo "Extracting features... (checkpointed every 5000 clips — safe to interrupt & resume)"
-    $RUN extract_epic_features.py
+    EPIC_LIMIT="$LIMIT" $RUN extract_epic_features.py
     ok "Feature extraction complete → features_epic.npz"
 fi
 
