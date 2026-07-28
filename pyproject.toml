@@ -5,12 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "numpy>=2.5.1",
-    "opencv-python>=5.0.0.93",
-    "pandas>=3.0.5",
-    "scikit-learn>=1.9.0",
-    "scipy>=1.18.0",
-    "torch>=2.13.0",
-    "torchaudio>=2.11.0",
-    "transformers>=5.14.1",
+    "numpy",
+    "opencv-python",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "torch",
+    "torchaudio",
+    "transformers",
 ]
