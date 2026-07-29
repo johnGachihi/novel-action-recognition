@@ -269,6 +269,10 @@ class ASTWrapper(torch.nn.Module):
 
 def main():
     import sys
+    print(f"Using device: {DEVICE}")
+    if DEVICE == 'cpu':
+        print("\nWARNING: CUDA is not available! Feature extraction will run on CPU and be extremely slow.")
+        print("Please check that your Kaggle notebook has GPU acceleration enabled in settings.\n")
     df = load_epic_manifest(min_count=20)
     if len(df) == 0:
         print("\nERROR: Loaded manifest is empty. No video directories found under the raw images path.")

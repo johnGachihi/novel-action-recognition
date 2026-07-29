@@ -87,7 +87,10 @@ die()  { echo -e "${RED}✗ $*${NC}" >&2; exit 1; }
 step "[1/5] Environment setup"
 # =============================================================================
 
-if command -v uv &>/dev/null; then
+if [[ -d "/kaggle" || -n "${KAGGLE_CONTAINER_NAME:-}" ]]; then
+    ok "Kaggle environment detected: using global python3 with pre-installed GPU-enabled ML libraries."
+    RUN="python3"
+elif command -v uv &>/dev/null; then
     ok "Found uv in PATH."
     RUN="uv run python3"
     uv sync --quiet
