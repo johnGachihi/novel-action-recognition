@@ -226,7 +226,10 @@ except ImportError:
     import huggingface_hub
 
 from huggingface_hub import snapshot_download
+from huggingface_hub.utils import disable_progress_bars
 import os, csv
+
+disable_progress_bars()
 
 repo_id   = os.environ.get("HF_REPO", "")
 clips_dir = os.environ.get("CLIPS_DIR", "")
@@ -260,7 +263,6 @@ snapshot_download(
     allow_patterns=patterns,
     token=token,
     ignore_patterns=["*.json", "*.csv", "README*"],
-    disable_tqdm=True,
 )
 
 # Count what we got
