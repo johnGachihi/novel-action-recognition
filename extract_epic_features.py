@@ -152,7 +152,7 @@ def decode_frames_range(video_path, start_frame, stop_frame, n=NUM_FRAMES):
     return [picked.get(idx, last) for idx in target_idxs]
 
 
-def decode_audio_segment(path, start_sec, duration_sec, target_sr=16000):
+def decode_audio_segment_ffmpeg(path, start_sec, duration_sec, target_sr=16000):
     target_length = target_sr * 10
     try:
         import tempfile
@@ -173,6 +173,36 @@ def decode_audio_segment(path, start_sec, duration_sec, target_sr=16000):
     except Exception:
         y = np.zeros(target_length, dtype=np.float32)
     
+    if len(y) < target_length:
+        y = np.pad(y, (0, target_length - len(y)))
+    else:
+        y = y[:target_length]
+    return y
+
+
+def decode_audio_segment(path, start_sec, duration_sec, target_sr=16000):
+    target_length = target_sr * 10
+    try:
+        import torchaudio
+        info = torchaudio.info(str(path))
+        sr = info.sample_rate
+        
+        frame_offset = int(start_sec * sr)
+        num_frames = int(duration_sec * sr)
+        
+        waveform, sr_loaded = torchaudio.load(
+            str(path),
+            frame_offset=frame_offset,
+            num_frames=num_frames
+        )
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        if sr_loaded != target_sr:
+            waveform = torchaudio.functional.resample(waveform, sr_loaded, target_sr)
+        y = waveform.squeeze().numpy()
+    except Exception:
+        return decode_audio_segment_ffmpeg(path, start_sec, duration_sec, target_sr)
+        
     if len(y) < target_length:
         y = np.pad(y, (0, target_length - len(y)))
     else:

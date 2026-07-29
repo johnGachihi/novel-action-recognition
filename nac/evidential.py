@@ -115,17 +115,20 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
         except Exception as e:
             print(f"Failed to load checkpoint: {e}. Starting from scratch.")
 
-    num_gpus = torch.cuda.device_count()
-    is_dp = False
-    if num_gpus > 1 and device != 'cpu':
-        device_ids = list(range(num_gpus))
-        print(f"Using DataParallel on {num_gpus} GPUs for LinearHead: {device_ids}")
-        head = torch.nn.DataParallel(head, device_ids=device_ids)
-        is_dp = True
-
-    X_t = torch.tensor(X, dtype=torch.float32)
-    y_t = torch.tensor(y, dtype=torch.long)
+    X_t = torch.tensor(X, dtype=torch.float32).to(device)
+    y_t = torch.tensor(y, dtype=torch.long).to(device)
     n = len(X_t)
+
+    # Pre-copy validation sets to GPU once to eliminate per-epoch overhead
+    X_vl = None
+    y_vl = None
+    if X_val_loss is not None and y_val_loss is not None:
+        X_vl = torch.tensor(X_val_loss, dtype=torch.float32).to(device)
+        y_vl = torch.tensor(y_val_loss, dtype=torch.long).to(device)
+
+    X_va = None
+    if X_val_auroc is not None:
+        X_va = torch.tensor(X_val_auroc, dtype=torch.float32).to(device)
     
     train_losses = history.setdefault('train_loss', [])
     val_losses = history.setdefault('val_loss', [])
@@ -134,13 +137,13 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
     if start_epoch < epochs:
         for epoch in range(start_epoch, epochs):
             head.train()
-            perm = torch.randperm(n)
+            perm = torch.randperm(n, device=device)
             epoch_loss = 0.0
             num_batches = 0
             for i in range(0, n, batch_size):
                 idx = perm[i:i + batch_size]
                 opt.zero_grad()
-                l = loss(head(X_t[idx].to(device)), y_t[idx].to(device), epoch)
+                l = loss(head(X_t[idx]), y_t[idx], epoch)
                 l.backward()
                 opt.step()
                 epoch_loss += l.item()
@@ -148,20 +151,18 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
             train_losses.append(epoch_loss / max(1, num_batches))
             
             # Calculate validation loss if provided
-            if X_val_loss is not None and y_val_loss is not None:
+            if X_vl is not None and y_vl is not None:
                 head.eval()
                 with torch.no_grad():
-                    X_vl = torch.tensor(X_val_loss, dtype=torch.float32).to(device)
-                    y_vl = torch.tensor(y_val_loss, dtype=torch.long).to(device)
                     val_l = loss(head(X_vl), y_vl, epoch).item()
                 val_losses.append(val_l)
             
             # Calculate validation AUROC if provided
-            if X_val_auroc is not None and is_novel_val is not None:
+            if X_va is not None and is_novel_val is not None:
                 from sklearn.metrics import roc_auc_score
                 head.eval()
                 with torch.no_grad():
-                    alpha_val = predict_alpha(head, X_val_auroc, evidence=evidence, device=device)
+                    alpha_val = predict_alpha(head, X_va, evidence=evidence, device=device)
                     val_vacuity = (num_classes / alpha_val.sum(dim=1)).cpu().numpy()
                     if len(is_novel_val) > 0 and len(np.unique(is_novel_val)) > 1 and np.isfinite(val_vacuity).all():
                         val_auroc = float(roc_auc_score(is_novel_val, val_vacuity))
@@ -171,7 +172,7 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
             
             if checkpoint_path is not None:
                 torch.save({
-                    'head_state_dict': head.module.state_dict() if is_dp else head.state_dict(),
+                    'head_state_dict': head.state_dict(),
                     'opt_state_dict': opt.state_dict(),
                     'epoch': epoch,
                     'history': history
@@ -193,9 +194,13 @@ def predict_alpha(head, X, evidence='exp', batch_size=8192, device=None):
                 out_dim = p.shape[0]
                 break
         return torch.empty(0, out_dim or 1, device=device)
+
+    X_t = X if isinstance(X, torch.Tensor) else torch.tensor(X, dtype=torch.float32)
+    X_t = X_t.to(device)
+
     out = []
-    for i in range(0, len(X), batch_size):
-        logits = head(torch.tensor(X[i:i + batch_size], dtype=torch.float32).to(device))
+    for i in range(0, len(X_t), batch_size):
+        logits = head(X_t[i:i + batch_size])
         if evidence == 'msp':
             probs = torch.softmax(logits, dim=1)
             anomaly_score = 1.0 - probs.max(dim=1)[0]

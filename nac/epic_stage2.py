@@ -30,35 +30,32 @@ def compute_evidential_weights(alpha):
     u = K / S.squeeze(-1)  # (N,)
     
     # 2. Vectorized Dissonance Calculation
-    dissonance = np.zeros(N)
-    for i in range(N):
-        bi = b[i]
-        sum_bi = np.sum(bi)
-        if sum_bi == 0:
-            dissonance[i] = 0
-            continue
-            
-        bi_col = bi[:, np.newaxis]
-        bi_row = bi[np.newaxis, :]
-        sum_pairs = bi_col + bi_row
-        diff_pairs = np.abs(bi_col - bi_row)
+    sum_bi = np.sum(b, axis=1, keepdims=True)  # (N, 1)
+    
+    b_expanded_k = b[:, :, np.newaxis]  # (N, K, 1)
+    b_expanded_j = b[:, np.newaxis, :]  # (N, 1, K)
+    
+    sum_pairs = b_expanded_k + b_expanded_j  # (N, K, K)
+    diff_pairs = np.abs(b_expanded_k - b_expanded_j)  # (N, K, K)
+    
+    with np.errstate(divide='ignore', invalid='ignore'):
+        bal = 1.0 - (diff_pairs / sum_pairs)
+        bal[sum_pairs == 0] = 1.0
         
-        with np.errstate(divide='ignore', invalid='ignore'):
-            bal = 1.0 - (diff_pairs / sum_pairs)
-            bal[sum_pairs == 0] = 1.0
-            
-        weighted_bal = bi_row * bal  # (K, K)
-        np.fill_diagonal(weighted_bal, 0.0)
+    weighted_bal = b_expanded_j * bal  # (N, K, K)
+    for i in range(K):
+        weighted_bal[:, i, i] = 0.0
         
-        numerator_k = np.sum(weighted_bal, axis=1)  # (K,)
-        denominator_k = sum_bi - bi  # (K,)
+    numerator_k = np.sum(weighted_bal, axis=2)  # (N, K)
+    denominator_k = sum_bi - b  # (N, K)
+    
+    with np.errstate(divide='ignore', invalid='ignore'):
+        diss_k = numerator_k / denominator_k
+        diss_k[denominator_k == 0] = 0.0
         
-        with np.errstate(divide='ignore', invalid='ignore'):
-            diss_k = numerator_k / denominator_k
-            diss_k[denominator_k == 0] = 0.0
-            
-        dissonance[i] = np.sum(bi * diss_k)
-        
+    dissonance = np.sum(b * diss_k, axis=1)  # (N,)
+    dissonance[sum_bi.squeeze(-1) == 0] = 0.0
+    
     weights = u * (1.0 - dissonance)
     return weights
 
