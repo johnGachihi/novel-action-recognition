@@ -92,7 +92,7 @@ def make_edl_loss(num_classes, loss_form='log', evidence='exp',
 def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
                batch_size=256, seed=0, device=None, checkpoint_path=None,
                X_val_loss=None, y_val_loss=None, X_val_auroc=None, is_novel_val=None,
-               evidence='exp'):
+               evidence='exp', resume=False):
     device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(seed)
     head = LinearHead(X.shape[1], num_classes).to(device)
@@ -100,7 +100,7 @@ def train_head(X, y, num_classes, loss, epochs=75, lr=1e-3, weight_decay=1e-4,
 
     history = {'train_loss': [], 'val_loss': [], 'val_auroc': []}
     start_epoch = 0
-    if checkpoint_path is not None and os.path.exists(checkpoint_path):
+    if resume and checkpoint_path is not None and os.path.exists(checkpoint_path):
         print(f"Loading checkpoint from {checkpoint_path}...")
         try:
             ckpt = torch.load(checkpoint_path, map_location=device)

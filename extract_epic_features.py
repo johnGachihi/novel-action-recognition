@@ -234,12 +234,13 @@ def decode_audio(path, target_sr=16000):
 
 
 class EpicFeatureDataset(Dataset):
-    def __init__(self, paths, start_frames, stop_frames, is_video, processor, ast_extractor=None):
+    def __init__(self, paths, start_frames, stop_frames, is_video, processor, ast_extractor):
         self.paths = paths
         self.start_frames = start_frames
         self.stop_frames = stop_frames
         self.is_video = is_video
         self.processor = processor
+        self.ast_extractor = ast_extractor
 
     def __len__(self):
         return len(self.paths)
@@ -255,17 +256,25 @@ class EpicFeatureDataset(Dataset):
                 start_f = self.start_frames[idx]
                 stop_f = self.stop_frames[idx]
                 picked = decode_frames_range(path, start_f, stop_f)
+                
+                # Decode segment audio to prevent OOM on full video files
+                start_sec = start_f / 50.0
+                duration_sec = (stop_f - start_f) / 50.0
+                aw = decode_audio_segment(path, start_sec, duration_sec)
             elif os.path.isdir(str(path)):
                 start_f = self.start_frames[idx]
                 stop_f = self.stop_frames[idx]
                 picked = decode_frames_from_dir(path, start_f, stop_f)
+                aw = decode_audio(path)
             else:
                 picked = decode_frames_uniform(path)
+                aw = decode_audio(path)
                 
-            print(f"[Dataset] Decoded {len(picked)} frames in {time.time() - t_start:.2f}s", flush=True)
+            t_decode = time.time()
             pv = self.processor(picked, return_tensors="pt")['pixel_values'][0]
-            print(f"[Dataset] Processed item {idx} in {time.time() - t_start:.2f}s", flush=True)
-            return pv, idx
+            audio_feat = self.ast_extractor(aw, sampling_rate=16000, return_tensors="pt")['input_values'][0]
+            print(f"[Dataset] Decoded & processed item {idx} in {time.time() - t_start:.2f}s (decoding took {t_decode - t_start:.2f}s)", flush=True)
+            return pv, audio_feat, idx
         except Exception as e:
             print(f"[Dataset] ERROR on item {idx}: {e}", flush=True)
             return None
@@ -274,9 +283,9 @@ class EpicFeatureDataset(Dataset):
 def collate(batch):
     batch = [b for b in batch if b is not None]
     if not batch:
-        return None, []
-    pv, idxs = zip(*batch)
-    return torch.stack(pv), list(idxs)
+        return None, None, []
+    pv, aw, idxs = zip(*batch)
+    return torch.stack(pv), torch.stack(aw), list(idxs)
 
 
 class VideoMAEWrapper(torch.nn.Module):
@@ -340,8 +349,17 @@ def main():
     for p in model.parameters():
         p.requires_grad_(False)
 
-    # Wrap models (AST is bypassed for speed)
+    AST_MODEL_ID = 'MIT/ast-finetuned-audioset-10-10-0.4593'
+    ast_extractor = ASTFeatureExtractor.from_pretrained(AST_MODEL_ID, token=hf_token)
+    _ast_full = ASTForAudioClassification.from_pretrained(AST_MODEL_ID, token=hf_token)
+    ast_model = _ast_full.audio_spectrogram_transformer.to(DEVICE).eval()  # base model only
+    for p in ast_model.parameters():
+        p.requires_grad_(False)
+    del _ast_full  # free classifier head weights
+
+    # Wrap models
     videomae_wrapped = VideoMAEWrapper(model)
+    ast_wrapped = ASTWrapper(ast_model)
     batch_size = BATCH_SIZE
 
     ds = EpicFeatureDataset(
@@ -349,7 +367,8 @@ def main():
         remaining.start_frame.tolist() if 'start_frame' in remaining.columns else None,
         remaining.stop_frame.tolist() if 'stop_frame' in remaining.columns else None,
         remaining.is_video.tolist() if 'is_video' in remaining.columns else None,
-        processor
+        processor,
+        ast_extractor
     )
     loader = DataLoader(ds, batch_size=batch_size, collate_fn=collate,
                         num_workers=NUM_WORKERS, shuffle=False, pin_memory=True)
@@ -358,16 +377,16 @@ def main():
     t0 = time.time()
     n_done = 0
     with torch.no_grad():
-        for pv, idxs in tqdm(loader, desc="Extracting features", unit="batch"):
-            if pv is None:
+        for pv, aw, idxs in tqdm(loader, desc="Extracting features", unit="batch"):
+            if pv is None or aw is None:
                 continue
             pv = pv.to(DEVICE, non_blocking=True)
             video_out = videomae_wrapped(pv)
             
-            # Simulate multimodal features by appending zero-features (768-dim)
-            audio_out = torch.zeros((video_out.shape[0], 768), device=DEVICE, dtype=video_out.dtype)
-            fused_out = torch.cat([video_out, audio_out], dim=-1)
+            audio_in = aw.to(DEVICE, non_blocking=True)
+            audio_out = ast_wrapped(audio_in)
             
+            fused_out = torch.cat([video_out, audio_out], dim=-1)
             new_feats.append(fused_out.cpu().numpy())
             new_narr.append(remaining.narration_id.values[idxs])
             n_done += len(idxs)

@@ -111,7 +111,7 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
         elif name == 'standard_classifier':
             import torch.nn as nn
             loss_fn = lambda logits, target, epoch: nn.CrossEntropyLoss()(logits, target)
-            ckpt_path = "checkpoint.pt"
+            ckpt_path = f"checkpoint_{name}_{label_space}_{feature_mode}.pt"
             
             # Train the head with validation tracking
             head, history = train_head(
@@ -134,7 +134,7 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
         elif name in EVIDENTIAL_CONFIGS:
             cfg = {**EVIDENTIAL_CONFIGS[name], **(overrides or {}), 'total_epoch': epochs}
             loss = make_edl_loss(K, **cfg)
-            ckpt_path = "checkpoint.pt"
+            ckpt_path = f"checkpoint_{name}_{label_space}_{feature_mode}.pt"
             
             # Train the head with validation tracking
             head, history = train_head(
