@@ -202,10 +202,14 @@ else
 
     if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
         warn "--skip-download set: skipping HF clip download."
-        IFS=',' read -r -a clip_dirs_arr <<< "$CLIPS_DIR"
-        clip_count=$(find "${clip_dirs_arr[@]}" -name '*.mp4' 2>/dev/null | wc -l)
-        [[ "$clip_count" -eq 0 ]] && die "No clips found in $CLIPS_DIR. Remove --skip-download or point --clips-dir at existing clips."
-        ok "Using $clip_count existing clips in $CLIPS_DIR."
+        if [[ -n "${EPIC_RAW_IMAGES_DIR:-}" ]]; then
+            ok "Raw images mode active (skipping existing clips check)."
+        else
+            IFS=',' read -r -a clip_dirs_arr <<< "$CLIPS_DIR"
+            clip_count=$(find "${clip_dirs_arr[@]}" -name '*.mp4' 2>/dev/null | wc -l)
+            [[ "$clip_count" -eq 0 ]] && die "No clips found in $CLIPS_DIR. Remove --skip-download or point --clips-dir at existing clips."
+            ok "Using $clip_count existing clips in $CLIPS_DIR."
+        fi
     else
         mkdir -p "$CLIPS_DIR"
         echo "Downloading pre-clipped narrations from HuggingFace: $HF_REPO"
