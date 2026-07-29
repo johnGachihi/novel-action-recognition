@@ -29,8 +29,9 @@ from tqdm import tqdm
 from nac.epic_data import load_epic_manifest
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+USE_AMP = DEVICE == 'cuda'  # fp16 autocast — only for CUDA
 NUM_FRAMES = 16
-BATCH_SIZE = 128
+BATCH_SIZE = 256           # fp16 halves VRAM per sample; 256 is safe on T4/A100
 NUM_WORKERS = min(4, os.cpu_count() or 2)
 CHECKPOINT_EVERY = 5000
 OUT_PATH = 'features_epic.npz'
@@ -256,7 +257,8 @@ class VideoMAEWrapper(torch.nn.Module):
         super().__init__()
         self.model = model
     def forward(self, pixel_values):
-        return self.model(pixel_values=pixel_values).last_hidden_state.mean(dim=1)
+        with torch.autocast(device_type='cuda', enabled=USE_AMP):
+            return self.model(pixel_values=pixel_values).last_hidden_state.mean(dim=1)
 
 
 class ASTWrapper(torch.nn.Module):
@@ -264,15 +266,17 @@ class ASTWrapper(torch.nn.Module):
         super().__init__()
         self.model = model
     def forward(self, input_values):
-        return self.model(input_values).last_hidden_state.mean(dim=1)
+        with torch.autocast(device_type='cuda', enabled=USE_AMP):
+            return self.model(input_values).last_hidden_state.mean(dim=1)
 
 
 def main():
     import sys
-    print(f"Using device: {DEVICE}")
+    gpu_name = torch.cuda.get_device_name(0) if DEVICE == 'cuda' else 'N/A'
+    print(f"Using device: {DEVICE}  |  GPU: {gpu_name}  |  AMP fp16: {USE_AMP}")
     if DEVICE == 'cpu':
-        print("\nWARNING: CUDA is not available! Feature extraction will run on CPU and be extremely slow.")
-        print("Please check that your Kaggle notebook has GPU acceleration enabled in settings.\n")
+        print("\nWARNING: CUDA is not available — extraction will be very slow.")
+        print("If on Kaggle, enable GPU in Settings > Accelerator and re-run.\n")
     df = load_epic_manifest(min_count=20)
     if len(df) == 0:
         print("\nERROR: Loaded manifest is empty. No video directories found under the raw images path.")
@@ -317,9 +321,16 @@ def main():
         p.requires_grad_(False)
     del _ast_full  # free classifier head weights
 
-    # Wrap models
+    # Wrap models — torch.compile fuses ops and eliminates per-op Python dispatch
     videomae_wrapped = VideoMAEWrapper(model)
     ast_wrapped = ASTWrapper(ast_model)
+    if DEVICE == 'cuda':
+        try:
+            videomae_wrapped = torch.compile(videomae_wrapped)
+            ast_wrapped = torch.compile(ast_wrapped)
+            print("torch.compile enabled — first batch will be slow (JIT compilation), subsequent batches will be fast.")
+        except Exception as e:
+            print(f"torch.compile unavailable ({e}), running in eager mode.")
     batch_size = BATCH_SIZE
 
     ds = EpicFeatureDataset(
