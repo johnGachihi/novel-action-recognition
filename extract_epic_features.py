@@ -30,7 +30,7 @@ from nac.epic_data import load_epic_manifest
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_FRAMES = 16
-BATCH_SIZE = 32
+BATCH_SIZE = 512
 NUM_WORKERS = 12
 CHECKPOINT_EVERY = 5000
 OUT_PATH = 'features_epic.npz'
