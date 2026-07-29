@@ -14,8 +14,8 @@ The pipeline supports extracting features from either raw videos, pre-clipped na
 | **Audio Backbone** | `MIT/ast-finetuned-audioset-10-10-0.4593` (Frozen) | Input length: 10s. Target sampling rate: 16,000 Hz. |
 | **Audio Feature Dim** | 768 | Base audio spectrogram transformer outputs. |
 | **Fused Feature Dim** | 1536 | Concatenated VideoMAE (768) + AST (768) features (in multimodal mode). |
-| **Batch Size** | 512 (Standard) | Dynamically scaled to `32 * num_gpus` for multi-GPU setups. |
-| **Data Loader Workers** | 12 | Parallel processing of clip decodes and image transforms. |
+| **Batch Size** | 128 | Single-GPU execution (optimized to avoid OOM). |
+| **Data Loader Workers** | Dynamically scaled | Set to `min(4, os.cpu_count() or 2)` to match CPU cores. |
 
 ---
 

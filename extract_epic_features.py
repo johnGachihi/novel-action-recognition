@@ -30,7 +30,7 @@ from nac.epic_data import load_epic_manifest
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_FRAMES = 16
-BATCH_SIZE = 512
+BATCH_SIZE = 128
 NUM_WORKERS = min(4, os.cpu_count() or 2)
 CHECKPOINT_EVERY = 5000
 OUT_PATH = 'features_epic.npz'
@@ -320,16 +320,7 @@ def main():
     # Wrap models
     videomae_wrapped = VideoMAEWrapper(model)
     ast_wrapped = ASTWrapper(ast_model)
-
     batch_size = BATCH_SIZE
-    num_gpus = torch.cuda.device_count()
-    if num_gpus > 1:
-        device_ids = list(range(num_gpus))
-        print(f"Using DataParallel on {num_gpus} GPUs: {device_ids}")
-        videomae_wrapped = torch.nn.DataParallel(videomae_wrapped, device_ids=device_ids)
-        ast_wrapped = torch.nn.DataParallel(ast_wrapped, device_ids=device_ids)
-        batch_size = 32 * num_gpus
-        print(f"Scaled batch size to {batch_size}")
 
     ds = EpicFeatureDataset(
         remaining.path.tolist(),
