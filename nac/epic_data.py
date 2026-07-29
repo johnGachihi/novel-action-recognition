@@ -38,22 +38,47 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
 
     raw_images_dir = os.environ.get("EPIC_RAW_IMAGES_DIR")
     if raw_images_dir:
-        # Find all rgb_frames directories recursively
-        search_pattern = os.path.join(raw_images_dir, "**", "rgb_frames")
-        rgb_folders = glob.glob(search_pattern, recursive=True)
-        
-        # Build mapping from video_id (e.g. P02_01) to its directory path
+        if not os.path.exists(raw_images_dir):
+            if os.path.exists("/kaggle/input"):
+                raw_images_dir = "/kaggle/input"
+            elif os.path.exists(os.path.dirname(raw_images_dir)):
+                raw_images_dir = os.path.dirname(raw_images_dir)
+
+        import re
+        video_pattern = re.compile(r"^P\d{2}_\d{2}$")
         video_dirs = {}
+
+        # First try: search for "rgb_frames" and list its subdirectories
+        rgb_folders = []
+        try:
+            for root, dirs, files in os.walk(raw_images_dir):
+                if "rgb_frames" in dirs:
+                    rgb_folders.append(os.path.join(root, "rgb_frames"))
+        except Exception:
+            pass
+
         for folder in rgb_folders:
             try:
                 for sub in os.listdir(folder):
                     sub_path = os.path.join(folder, sub)
-                    if os.path.isdir(sub_path):
+                    if os.path.isdir(sub_path) and video_pattern.match(sub):
                         video_dirs[sub] = sub_path
             except Exception:
                 pass
+
+        # Second try (fallback): search for any folder matching Pxx_xx directly
+        if not video_dirs:
+            try:
+                for root, dirs, files in os.walk(raw_images_dir):
+                    for d in dirs:
+                        if video_pattern.match(d):
+                            video_dirs[d] = os.path.join(root, d)
+            except Exception:
+                pass
+
         df = df[df.video_id.isin(video_dirs)].copy()
         df['path'] = df.video_id.map(video_dirs)
+
     else:
         if isinstance(clips_root, str):
             clips_roots = [r.strip() for r in clips_root.split(',')]

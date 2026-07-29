@@ -198,7 +198,12 @@ class ASTWrapper(torch.nn.Module):
 
 
 def main():
+    import sys
     df = load_epic_manifest(min_count=20)
+    if len(df) == 0:
+        print("\nERROR: Loaded manifest is empty. No video directories found under the raw images path.")
+        print("Please verify that your --raw-images-dir contains the expected participant directories.")
+        sys.exit(1)
     print(f"manifest: {len(df)} clips ({df.verb_keep.sum()} verb-kept, {df.noun_keep.sum()} noun-kept)")
 
     # Smoke-test cap: honour EPIC_LIMIT env var set by run_end_to_end.sh --limit N
