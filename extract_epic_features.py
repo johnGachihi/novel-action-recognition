@@ -32,7 +32,7 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 USE_AMP = DEVICE == 'cuda'  # fp16 autocast — only for CUDA
 NUM_FRAMES = 16
 BATCH_SIZE = 256           # fp16 halves VRAM per sample; 256 is safe on T4/A100
-NUM_WORKERS = min(4, os.cpu_count() or 2)
+NUM_WORKERS = 0            # Set to 0 to avoid OpenCV + fork deadlocks in PyTorch DataLoader
 CHECKPOINT_EVERY = 5000
 OUT_PATH = 'features_epic.npz'
 PARTIAL_PATH = 'features_epic.npz.partial.npz'
