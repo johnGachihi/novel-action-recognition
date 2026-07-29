@@ -22,17 +22,6 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
     """Join downloaded clips against EPIC-KITCHENS-100 annotations.
     If selected_participants.json exists, we load both train and validation annotation CSVs
     to support disjoint participant splits. Returns a filtered DataFrame."""
-    if isinstance(clips_root, str):
-        clips_roots = [r.strip() for r in clips_root.split(',')]
-    else:
-        clips_roots = clips_root
-        
-    files = []
-    for root in clips_roots:
-        files.extend(glob.glob(f'{root}/*/*.mp4'))
-        
-    ids_to_path = {os.path.basename(f)[:-4]: f for f in files}
-
     if os.path.exists('selected_participants.json') or annot_path == ANNOT_TRAIN:
         df_train = pd.read_csv('epic-kitchens-100-annotations/EPIC_100_train.csv')
         df_val = pd.read_csv('epic-kitchens-100-annotations/EPIC_100_validation.csv')
@@ -47,8 +36,38 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
         all_sel_pids = set(sel['train'] + sel['val'] + sel['test'])
         df = df[df.participant_id.isin(all_sel_pids)].copy()
 
-    df = df[df.narration_id.isin(ids_to_path)].copy()
-    df['path'] = df.narration_id.map(ids_to_path)
+    raw_images_dir = os.environ.get("EPIC_RAW_IMAGES_DIR")
+    if raw_images_dir:
+        # Find all rgb_frames directories recursively
+        search_pattern = os.path.join(raw_images_dir, "**", "rgb_frames")
+        rgb_folders = glob.glob(search_pattern, recursive=True)
+        
+        # Build mapping from video_id (e.g. P02_01) to its directory path
+        video_dirs = {}
+        for folder in rgb_folders:
+            try:
+                for sub in os.listdir(folder):
+                    sub_path = os.path.join(folder, sub)
+                    if os.path.isdir(sub_path):
+                        video_dirs[sub] = sub_path
+            except Exception:
+                pass
+        df = df[df.video_id.isin(video_dirs)].copy()
+        df['path'] = df.video_id.map(video_dirs)
+    else:
+        if isinstance(clips_root, str):
+            clips_roots = [r.strip() for r in clips_root.split(',')]
+        else:
+            clips_roots = clips_root
+            
+        files = []
+        for root in clips_roots:
+            files.extend(glob.glob(f'{root}/*/*.mp4'))
+            
+        ids_to_path = {os.path.basename(f)[:-4]: f for f in files}
+
+        df = df[df.narration_id.isin(ids_to_path)].copy()
+        df['path'] = df.narration_id.map(ids_to_path)
 
     vc = df.verb_class.value_counts()
     nc = df.noun_class.value_counts()

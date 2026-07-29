@@ -104,8 +104,31 @@ def decode_audio_ffmpeg(path, target_sr=16000):
     return y
 
 
+def decode_frames_from_dir(path, start_f, stop_f, n=NUM_FRAMES):
+    target_idxs = np.linspace(start_f, stop_f, n).round().astype(int)
+    frames = []
+    for idx in target_idxs:
+        loaded = False
+        for prefix in ["img_", "frame_"]:
+            for ext in [".jpg", ".png", ".JPEG", ".JPG"]:
+                img_path = os.path.join(str(path), f"{prefix}{idx:010d}{ext}")
+                if os.path.exists(img_path):
+                    img = cv2.imread(img_path)
+                    if img is not None:
+                        frames.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                        loaded = True
+                        break
+            if loaded:
+                break
+        if not loaded:
+            frames.append(np.zeros((224, 224, 3), dtype=np.uint8))
+    return frames
+
+
 def decode_audio(path, target_sr=16000):
     target_length = target_sr * 10
+    if os.path.isdir(str(path)):
+        return np.zeros(target_length, dtype=np.float32)
     try:
         import torchaudio
         waveform, sr = torchaudio.load(path)
@@ -125,8 +148,10 @@ def decode_audio(path, target_sr=16000):
 
 
 class EpicFeatureDataset(Dataset):
-    def __init__(self, paths, processor):
+    def __init__(self, paths, start_frames, stop_frames, processor):
         self.paths = paths
+        self.start_frames = start_frames
+        self.stop_frames = stop_frames
         self.processor = processor
 
     def __len__(self):
@@ -135,7 +160,12 @@ class EpicFeatureDataset(Dataset):
     def __getitem__(self, idx):
         try:
             path = self.paths[idx]
-            picked = decode_frames_uniform(path)
+            if os.path.isdir(str(path)):
+                start_f = self.start_frames[idx]
+                stop_f = self.stop_frames[idx]
+                picked = decode_frames_from_dir(path, start_f, stop_f)
+            else:
+                picked = decode_frames_uniform(path)
             pv = self.processor(picked, return_tensors="pt")['pixel_values'][0]
             aw = decode_audio(path)
             return pv, aw, idx
@@ -222,7 +252,12 @@ def main():
         batch_size = 32 * num_gpus
         print(f"Scaled batch size to {batch_size}")
 
-    ds = EpicFeatureDataset(remaining.path.tolist(), processor)
+    ds = EpicFeatureDataset(
+        remaining.path.tolist(),
+        remaining.start_frame.tolist() if 'start_frame' in remaining.columns else None,
+        remaining.stop_frame.tolist() if 'stop_frame' in remaining.columns else None,
+        processor
+    )
     loader = DataLoader(ds, batch_size=batch_size, collate_fn=collate,
                         num_workers=NUM_WORKERS, shuffle=False, pin_memory=True)
 

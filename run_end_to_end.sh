@@ -32,6 +32,7 @@ BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 # ---------- defaults ---------------------------------------------------------
 RAW_DIR="data/epic_kitchens_raw"
 CLIPS_DIR="data/epic_kitchens_clips/clips"
+RAW_IMAGES_DIR=""
 PARTICIPANTS="all"
 LABEL_SPACE="all"
 SKIP_DOWNLOAD=false
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --output-path)      RAW_DIR="$2";           shift 2 ;;
         --clips-dir)        CLIPS_DIR="$2";         shift 2 ;;
+        --raw-images-dir)   RAW_IMAGES_DIR="$2";    shift 2 ;;
         --participants)     PARTICIPANTS="$2";      shift 2 ;;
         --label-space)      LABEL_SPACE="$2";       shift 2 ;;
         --skip-download)    SKIP_DOWNLOAD=true;     shift ;;
@@ -66,6 +68,12 @@ while [[ $# -gt 0 ]]; do
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
     esac
 done
+
+if [[ -n "$RAW_IMAGES_DIR" ]]; then
+    export EPIC_RAW_IMAGES_DIR="$RAW_IMAGES_DIR"
+    SKIP_DOWNLOAD=true
+    SKIP_CLIPPING=true
+fi
 
 
 step() { echo -e "\n${BOLD}${BLUE}==== $* ====${NC}"; }
@@ -418,10 +426,14 @@ fi
 step "[4b/5] Pre-flight check"
 # =============================================================================
 
-IFS=',' read -r -a clip_dirs_arr <<< "$CLIPS_DIR"
-clip_count=$(find "${clip_dirs_arr[@]}" -name '*.mp4' 2>/dev/null | wc -l)
-[[ "$clip_count" -eq 0 ]] && die "No .mp4 clips found in $CLIPS_DIR."
-ok "Found $clip_count clips."
+if [[ -n "${EPIC_RAW_IMAGES_DIR:-}" ]]; then
+    ok "Raw images mode active (skipping .mp4 clip pre-flight check)."
+else
+    IFS=',' read -r -a clip_dirs_arr <<< "$CLIPS_DIR"
+    clip_count=$(find "${clip_dirs_arr[@]}" -name '*.mp4' 2>/dev/null | wc -l)
+    [[ "$clip_count" -eq 0 ]] && die "No .mp4 clips found in $CLIPS_DIR."
+    ok "Found $clip_count clips."
+fi
 
 # Patch clips root into nac/epic_data.py if it differs from the default
 $RUN - <<PYEOF
