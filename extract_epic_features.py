@@ -351,16 +351,9 @@ def main():
         p.requires_grad_(False)
     del _ast_full  # free classifier head weights
 
-    # Wrap models — torch.compile fuses ops and eliminates per-op Python dispatch
+    # Wrap models
     videomae_wrapped = VideoMAEWrapper(model)
     ast_wrapped = ASTWrapper(ast_model)
-    if DEVICE == 'cuda':
-        try:
-            videomae_wrapped = torch.compile(videomae_wrapped)
-            ast_wrapped = torch.compile(ast_wrapped)
-            print("torch.compile enabled — first batch will be slow (JIT compilation), subsequent batches will be fast.")
-        except Exception as e:
-            print(f"torch.compile unavailable ({e}), running in eager mode.")
     batch_size = BATCH_SIZE
 
     ds = EpicFeatureDataset(
