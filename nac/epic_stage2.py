@@ -223,7 +223,7 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
             yd = np.concatenate([y_lab, assign1[free_m]])
             mu, sig = Xd.mean(0), Xd.std(0) + 1e-6
             loss = make_edl_loss(N1, total_epoch=gate_epochs)  # DEAR best config
-            ckpt_path = f"checkpoint_stage2_{label_space}_{name}_seed0.pt"
+            ckpt_path = "checkpoint.pt"
             
             # Prepare validation data (calibration set ho1)
             X_val_loss = (feats[ho1] - mu) / sig if len(ho1) else None
@@ -260,7 +260,7 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
             yd = np.concatenate([y_lab, assign1[free_m]])
             mu, sig = Xd.mean(0), Xd.std(0) + 1e-6
             loss = make_edl_loss(N1, total_epoch=gate_epochs)
-            ckpt_path = f"checkpoint_stage2_{label_space}_dear_reject_seed0.pt"
+            ckpt_path = "checkpoint.pt"
             
             X_val_loss = (feats[ho1] - mu) / sig if len(ho1) else None
             y_val_loss = ho1_cls if len(ho1) else None
@@ -286,7 +286,7 @@ def run_epic_continual(label_space, methods=ALL_METHODS, seed=0, seen_ratio=40 /
         elif name == 'standard_classifier':
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             loss_fn = lambda logits, target, epoch: nn.CrossEntropyLoss()(logits, target)
-            ckpt_path = f"checkpoint_stage2_{label_space}_{name}_seed0.pt"
+            ckpt_path = "checkpoint.pt"
             
             head = LinearHead(feats.shape[1], NK).to(device)
             head, history = train_head(
