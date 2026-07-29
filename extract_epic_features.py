@@ -125,6 +125,60 @@ def decode_frames_from_dir(path, start_f, stop_f, n=NUM_FRAMES):
     return frames
 
 
+def decode_frames_range(video_path, start_frame, stop_frame, n=NUM_FRAMES):
+    cap = cv2.VideoCapture(str(video_path))
+    target_idxs = np.linspace(start_frame, stop_frame, n).round().astype(int)
+    target_set = set(target_idxs.tolist())
+    max_idx = int(target_idxs.max())
+    
+    # Seek to the start frame to speed up decoding
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    
+    picked = {}
+    i = start_frame
+    while i <= max_idx:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if i in target_set:
+            picked[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        i += 1
+    cap.release()
+    
+    if not picked:
+        return [np.zeros((224, 224, 3), np.uint8)] * n
+    last = picked[max(picked)]
+    return [picked.get(idx, last) for idx in target_idxs]
+
+
+def decode_audio_segment(path, start_sec, duration_sec, target_sr=16000):
+    target_length = target_sr * 10
+    try:
+        import tempfile
+        import subprocess
+        import scipy.io.wavfile as wavfile
+        with tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav:
+            cmd = [
+                'ffmpeg', '-y',
+                '-ss', f"{start_sec:.3f}",
+                '-t', f"{duration_sec:.3f}",
+                '-i', str(path),
+                '-vn', '-acodec', 'pcm_s16le', '-ar', str(target_sr),
+                '-ac', '1', temp_wav.name
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            sr, y = wavfile.read(temp_wav.name)
+            y = y.astype(np.float32) / 32768.0
+    except Exception:
+        y = np.zeros(target_length, dtype=np.float32)
+    
+    if len(y) < target_length:
+        y = np.pad(y, (0, target_length - len(y)))
+    else:
+        y = y[:target_length]
+    return y
+
+
 def decode_audio(path, target_sr=16000):
     target_length = target_sr * 10
     if os.path.isdir(str(path)):
@@ -148,10 +202,11 @@ def decode_audio(path, target_sr=16000):
 
 
 class EpicFeatureDataset(Dataset):
-    def __init__(self, paths, start_frames, stop_frames, processor):
+    def __init__(self, paths, start_frames, stop_frames, is_video, processor):
         self.paths = paths
         self.start_frames = start_frames
         self.stop_frames = stop_frames
+        self.is_video = is_video
         self.processor = processor
 
     def __len__(self):
@@ -160,17 +215,31 @@ class EpicFeatureDataset(Dataset):
     def __getitem__(self, idx):
         try:
             path = self.paths[idx]
-            if os.path.isdir(str(path)):
+            is_vid = self.is_video[idx] if self.is_video is not None else False
+            
+            if is_vid:
+                start_f = self.start_frames[idx]
+                stop_f = self.stop_frames[idx]
+                picked = decode_frames_range(path, start_f, stop_f)
+                
+                # Decode segment audio to prevent OOM on full video files
+                start_sec = start_f / 50.0
+                duration_sec = (stop_f - start_f) / 50.0
+                aw = decode_audio_segment(path, start_sec, duration_sec)
+            elif os.path.isdir(str(path)):
                 start_f = self.start_frames[idx]
                 stop_f = self.stop_frames[idx]
                 picked = decode_frames_from_dir(path, start_f, stop_f)
+                aw = decode_audio(path)
             else:
                 picked = decode_frames_uniform(path)
+                aw = decode_audio(path)
+                
             pv = self.processor(picked, return_tensors="pt")['pixel_values'][0]
-            aw = decode_audio(path)
             return pv, aw, idx
         except Exception:
             return None
+
 
 
 def collate(batch):
@@ -261,6 +330,7 @@ def main():
         remaining.path.tolist(),
         remaining.start_frame.tolist() if 'start_frame' in remaining.columns else None,
         remaining.stop_frame.tolist() if 'stop_frame' in remaining.columns else None,
+        remaining.is_video.tolist() if 'is_video' in remaining.columns else None,
         processor
     )
     loader = DataLoader(ds, batch_size=batch_size, collate_fn=collate,

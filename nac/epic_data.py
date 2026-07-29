@@ -46,28 +46,34 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
 
         import re
         video_pattern = re.compile(r"^P\d{2}_\d{2}$")
+        video_files = {}
         video_dirs = {}
 
-        # First try: search for "rgb_frames" and list its subdirectories
-        rgb_folders = []
+        # Scan for video files and rgb_frames directories
         try:
             for root, dirs, files in os.walk(raw_images_dir):
+                # 1. Search for video files
+                for f in files:
+                    base, ext = os.path.splitext(f)
+                    if ext.lower() in ('.mp4', '.mkv', '.avi', '.webm'):
+                        if video_pattern.match(base):
+                            video_files[base] = os.path.join(root, f)
+                
+                # 2. Search for rgb_frames subdirectories
                 if "rgb_frames" in dirs:
-                    rgb_folders.append(os.path.join(root, "rgb_frames"))
+                    rgb_folder = os.path.join(root, "rgb_frames")
+                    try:
+                        for sub in os.listdir(rgb_folder):
+                            sub_path = os.path.join(rgb_folder, sub)
+                            if os.path.isdir(sub_path) and video_pattern.match(sub):
+                                video_dirs[sub] = sub_path
+                    except Exception:
+                        pass
         except Exception:
             pass
 
-        for folder in rgb_folders:
-            try:
-                for sub in os.listdir(folder):
-                    sub_path = os.path.join(folder, sub)
-                    if os.path.isdir(sub_path) and video_pattern.match(sub):
-                        video_dirs[sub] = sub_path
-            except Exception:
-                pass
-
-        # Second try (fallback): search for any folder matching Pxx_xx directly
-        if not video_dirs:
+        # Fallback: search for Pxx_xx directories directly
+        if not video_files and not video_dirs:
             try:
                 for root, dirs, files in os.walk(raw_images_dir):
                     for d in dirs:
@@ -76,8 +82,18 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
             except Exception:
                 pass
 
-        df = df[df.video_id.isin(video_dirs)].copy()
-        df['path'] = df.video_id.map(video_dirs)
+        if video_files:
+            df = df[df.video_id.isin(video_files)].copy()
+            df['path'] = df.video_id.map(video_files)
+            df['is_video'] = True
+        elif video_dirs:
+            df = df[df.video_id.isin(video_dirs)].copy()
+            df['path'] = df.video_id.map(video_dirs)
+            df['is_video'] = False
+        else:
+            df = df.head(0).copy()
+            df['is_video'] = False
+
 
     else:
         if isinstance(clips_root, str):
