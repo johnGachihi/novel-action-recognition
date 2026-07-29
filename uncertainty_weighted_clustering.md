@@ -31,6 +31,12 @@ $$\text{bal}(b_{ik}, b_{ij}) = \begin{cases}
 We calculate a reliability weight $w_i \in [0, 1]$ for each rejected sample $i$:
 $$w_i = u_i \cdot (1 - d_i)$$
 
+## Full $w_i$ expression: 
+
+$$
+w_i = \frac{K}{\sum_{k=1}^K \alpha_{ik}} \left( 1 - \sum_{k=1}^K \frac{b_{ik} \sum_{j \neq k} b_{ij} \text{bal}(b_{ik}, b_{ij})}{\sum_{j \neq k} b_{ij}} \right)
+$$
+
 ---
 
 ## 2. Python Implementation: Dissonance & Weighting

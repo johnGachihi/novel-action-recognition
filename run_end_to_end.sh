@@ -208,7 +208,7 @@ else
         fi
 
         # Use huggingface_hub to download — install it if missing
-        $RUN - <<PYEOF
+        LIMIT="$LIMIT" HF_REPO="$HF_REPO" CLIPS_DIR="$CLIPS_DIR" HF_TOKEN="$HF_TOKEN" PARTICIPANTS="$PARTICIPANTS" ANNOT_DIR="$ANNOT_DIR" $RUN - <<"PYEOF"
 import sys, subprocess
 try:
     import huggingface_hub
@@ -219,17 +219,18 @@ except ImportError:
 from huggingface_hub import snapshot_download
 import os, csv
 
-repo_id   = "$HF_REPO"
-clips_dir = "$CLIPS_DIR"
-token     = "$HF_TOKEN" or None
-limit     = $LIMIT
-participants = "$PARTICIPANTS"
+repo_id   = os.environ.get("HF_REPO", "")
+clips_dir = os.environ.get("CLIPS_DIR", "")
+token     = os.environ.get("HF_TOKEN", "") or None
+limit     = int(os.environ.get("LIMIT", "0"))
+participants = os.environ.get("PARTICIPANTS", "all")
+annot_dir = os.environ.get("ANNOT_DIR", "")
 
 # Build allow_patterns
 if participants == 'all':
     if limit > 0:
-        # Only download participants needed for the first `limit` narrations
-        rows = list(csv.DictReader(open("$ANNOT_DIR/EPIC_100_train.csv")))[:limit]
+        # Only download participants needed for the first limit narrations
+        rows = list(csv.DictReader(open(f"{annot_dir}/EPIC_100_train.csv")))[:limit]
         needed_pids = sorted({r['participant_id'] for r in rows})
         print(f"Smoke-test: downloading participants {needed_pids} (covers first {limit} narrations)")
         patterns = [f"clips/{p}/*.mp4" for p in needed_pids]
@@ -250,6 +251,7 @@ snapshot_download(
     allow_patterns=patterns,
     token=token,
     ignore_patterns=["*.json", "*.csv", "README*"],
+    disable_tqdm=True,
 )
 
 # Count what we got

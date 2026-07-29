@@ -21,18 +21,18 @@ graph TD
 
     AllActions["EPIC-KITCHENS-100 Actions"] --> Known["Known Classes"]
     AllActions --> Novel["Novel Classes"]
-    
-    Known --> TrainSet["Train Set: 80% Known Only"]:::train
-    Known --> ValSet["Validation Set: 10% Known Only"]:::val
-    Known --> TestSet["Test Set: 10% Known Only"]:::test
-    
+
+    Known --> TrainSet["Train Set: 80 percent Known Only"]:::train
+    Known --> ValSet["Validation Set: 10 percent Known Only"]:::val
+    Known --> TestSet["Test Set: 10 percent Known Only"]:::test
+
     Novel --> SeenNovel["Seen Novel Classes"]
     Novel --> UnseenNovel["Unseen Novel Classes"]
-    
-    SeenNovel --> ValNovel["Val Novel: 50%"]:::val
-    SeenNovel --> TestNovel["Test Novel: 50%"]:::test
-    
-    UnseenNovel --> StreamNovel["Test Stream: 100%"]:::test
+
+    SeenNovel --> ValNovel["Val Novel: 50 percent"]:::val
+    SeenNovel --> TestNovel["Test Novel: 50 percent"]:::test
+
+    UnseenNovel --> StreamNovel["Test Stream: 100 percent"]:::test
 ```
 
 * **Training Set**: Restricted strictly to $K$ known classes.
