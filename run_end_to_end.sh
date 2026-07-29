@@ -129,7 +129,7 @@ step "[3/5] Downloading pre-clipped EPIC-KITCHENS-100 narrations (HuggingFace)"
 # =============================================================================
 
 echo "Determining participants to include (percentage: $PERCENTAGE%)..."
-PARTICIPANTS=$(python3 select_participants.py "$PERCENTAGE")
+PARTICIPANTS=$($RUN select_participants.py "$PERCENTAGE")
 echo "Selected participants: $PARTICIPANTS"
 if [[ "$SKIP_EXTRACTION" != "true" ]]; then
     rm -f features_epic.npz features_epic.npz.partial.npz
