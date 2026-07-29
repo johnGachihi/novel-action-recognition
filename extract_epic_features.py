@@ -39,16 +39,12 @@ PARTIAL_PATH = 'features_epic.npz.partial.npz'
 
 
 def decode_frames_uniform(path, n=NUM_FRAMES):
-    """Single sequential decode pass (fast on compressed video -- no per-frame
-    seeks), but keeps only the n frames we actually need instead of materializing
-    the whole clip. nac.live_videomae.decode_all_frames stores every frame and is
-    fine for UCF101/HMDB51's uniformly short clips, but EPIC's per-narration clips
-    can run minutes long (up to 297s / ~14,900 frames observed in this subset --
-    one such clip fully decoded is ~18GB of raw RGB) and blowing that up across
-    12 parallel workers is exactly what OOM-killed the first extraction run."""
+    print(f"  [decode_frames_uniform] Opening VideoCapture for {path}", flush=True)
     cap = cv2.VideoCapture(str(path))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(f"  [decode_frames_uniform] total frames: {total}", flush=True)
     if total <= 0:  # unreliable metadata fallback: decode with a hard cap
+        print(f"  [decode_frames_uniform] WARNING: total <= 0, decoding sequentially with hard cap...", flush=True)
         frames, cap_n = [], 4000
         ok = True
         while ok and len(frames) < cap_n:
@@ -57,6 +53,7 @@ def decode_frames_uniform(path, n=NUM_FRAMES):
                 frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         cap.release()
         if not frames:
+            print(f"  [decode_frames_uniform] WARNING: No frames decoded at all. Returning zeros.", flush=True)
             return [np.zeros((224, 224, 3), np.uint8)] * n
         idxs = np.linspace(0, len(frames) - 1, n).round().astype(int)
         return [frames[i] for i in idxs]
@@ -64,16 +61,20 @@ def decode_frames_uniform(path, n=NUM_FRAMES):
     target_idxs = np.linspace(0, total - 1, n).round().astype(int)
     target_set = set(target_idxs.tolist())
     max_idx = int(target_idxs.max())
+    print(f"  [decode_frames_uniform] Target indices: {target_idxs}", flush=True)
     picked = {}
     i = 0
+    t0 = time.time()
     while i <= max_idx:
         ok, frame = cap.read()
         if not ok:
+            print(f"  [decode_frames_uniform] Premature EOF at frame {i}", flush=True)
             break
         if i in target_set:
             picked[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         i += 1
     cap.release()
+    print(f"  [decode_frames_uniform] Finished reading {i} frames in {time.time() - t0:.2f}s. Picked {len(picked)} target frames.", flush=True)
     if not picked:
         return [np.zeros((224, 224, 3), np.uint8)] * n
     last = picked[max(picked)]
@@ -244,8 +245,10 @@ class EpicFeatureDataset(Dataset):
         return len(self.paths)
 
     def __getitem__(self, idx):
+        path = self.paths[idx]
+        print(f"[Dataset] Starting item {idx}: {path}", flush=True)
+        t_start = time.time()
         try:
-            path = self.paths[idx]
             is_vid = self.is_video[idx] if self.is_video is not None else False
             
             if is_vid:
@@ -259,9 +262,12 @@ class EpicFeatureDataset(Dataset):
             else:
                 picked = decode_frames_uniform(path)
                 
+            print(f"[Dataset] Decoded {len(picked)} frames in {time.time() - t_start:.2f}s", flush=True)
             pv = self.processor(picked, return_tensors="pt")['pixel_values'][0]
+            print(f"[Dataset] Processed item {idx} in {time.time() - t_start:.2f}s", flush=True)
             return pv, idx
-        except Exception:
+        except Exception as e:
+            print(f"[Dataset] ERROR on item {idx}: {e}", flush=True)
             return None
 
 
