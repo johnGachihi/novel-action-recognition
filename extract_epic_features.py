@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import VideoMAEImageProcessor, VideoMAEModel, ASTFeatureExtractor, ASTForAudioClassification
+from tqdm import tqdm
 
 from nac.epic_data import load_epic_manifest
 
@@ -229,7 +230,7 @@ def main():
     t0 = time.time()
     n_done = 0
     with torch.no_grad():
-        for pv, aw, idxs in loader:
+        for pv, aw, idxs in tqdm(loader, desc="Extracting features", unit="batch"):
             if pv is None or aw is None:
                 continue
             pv = pv.to(DEVICE, non_blocking=True)
@@ -245,8 +246,6 @@ def main():
             new_narr.append(remaining.narration_id.values[idxs])
             n_done += len(idxs)
             if n_done % (CHECKPOINT_EVERY // batch_size * batch_size) < batch_size:
-                rate = n_done / (time.time() - t0)
-                print(f"  {n_done}/{len(remaining)} embedded ({rate:.1f} clips/sec)", flush=True)
                 checkpoint(feats_done + new_feats, narr_done + new_narr)
 
     checkpoint(feats_done + new_feats, narr_done + new_narr)

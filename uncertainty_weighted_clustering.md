@@ -37,6 +37,14 @@ $$
 w_i = \frac{K}{\sum_{k=1}^K \alpha_{ik}} \left( 1 - \sum_{k=1}^K \frac{b_{ik} \sum_{j \neq k} b_{ij} \text{bal}(b_{ik}, b_{ij})}{\sum_{j \neq k} b_{ij}} \right)
 $$
 
+$$
+w_1
+$$
+
+$$
+w_2
+$$
+
 ---
 
 ## 2. Python Implementation: Dissonance & Weighting
