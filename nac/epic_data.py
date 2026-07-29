@@ -18,12 +18,9 @@ ANNOT_TRAIN = 'epic-kitchens-100-annotations/EPIC_100_train.csv'
 
 
 def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRAIN):
-    """Join downloaded clips against EPIC_100_train.csv annotations (the
-    lightly-ai subset only contains train-split clips -- no official val clips
-    were downloaded). Returns a DataFrame with one row per downloaded clip,
-    plus per-label-space 'keep' masks for classes with >= min_count samples
-    (the long tail: 12/89 present verb classes and 88/251 present noun classes
-    fall below 20 samples and can't support a train/heldout/novel-eval split)."""
+    """Join downloaded clips against EPIC-KITCHENS-100 annotations.
+    If selected_participants.json exists, we load both train and validation annotation CSVs
+    to support disjoint participant splits. Returns a filtered DataFrame."""
     if isinstance(clips_root, str):
         clips_roots = [r.strip() for r in clips_root.split(',')]
     else:
@@ -34,7 +31,22 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
         files.extend(glob.glob(f'{root}/*/*.mp4'))
         
     ids_to_path = {os.path.basename(f)[:-4]: f for f in files}
-    df = pd.read_csv(annot_path)
+
+    if os.path.exists('selected_participants.json') or annot_path == ANNOT_TRAIN:
+        df_train = pd.read_csv('epic-kitchens-100-annotations/EPIC_100_train.csv')
+        df_val = pd.read_csv('epic-kitchens-100-annotations/EPIC_100_validation.csv')
+        df = pd.concat([df_train, df_val], ignore_index=True)
+        df = df.drop_duplicates(subset=['narration_id'])
+    else:
+        df = pd.read_csv(annot_path)
+
+    if os.path.exists('selected_participants.json'):
+        import json
+        with open('selected_participants.json') as f:
+            sel = json.load(f)
+        all_sel_pids = set(sel['train'] + sel['val'] + sel['test'])
+        df = df[df.participant_id.isin(all_sel_pids)].copy()
+
     df = df[df.narration_id.isin(ids_to_path)].copy()
     df['path'] = df.narration_id.map(ids_to_path)
 
@@ -92,6 +104,25 @@ def _split_units(idx, video_ids, rng, cut_fn):
 
 def known_train_heldout(classes, labels, video_ids, rng, frac=0.8):
     """Stage-1 split: per-class group-aware train/heldout (cut at int(frac*n))."""
+    if os.path.exists('selected_participants.json'):
+        import json
+        with open('selected_participants.json') as f:
+            sel = json.load(f)
+        train_pids = set(sel['train'])
+        val_pids = set(sel['val'])
+        test_pids = set(sel['test'])
+        
+        train, heldout = [], []
+        for c in classes:
+            idx = np.where(labels == c)[0]
+            for i in idx:
+                pid = video_ids[i].split('_')[0]
+                if pid in train_pids:
+                    train.append(i)
+                elif pid in val_pids or pid in test_pids:
+                    heldout.append(i)
+        return np.array(train, dtype=int), np.array(heldout, dtype=int)
+
     train, heldout = [], []
     for c in classes:
         idx = np.where(labels == c)[0]
@@ -102,11 +133,28 @@ def known_train_heldout(classes, labels, video_ids, rng, frac=0.8):
 
 
 def known_three_way(classes, labels, video_ids, rng, frac=0.8):
-    """Stage-2 split: train / phase-1 heldout / phase-2 heldout, group-aware.
+    """Stage-2 split: train / phase-1 heldout / phase-2 heldout, group-aware."""
+    if os.path.exists('selected_participants.json'):
+        import json
+        with open('selected_participants.json') as f:
+            sel = json.load(f)
+        train_pids = set(sel['train'])
+        val_pids = set(sel['val'])
+        test_pids = set(sel['test'])
+        
+        train, ho1, ho2 = [], [], []
+        for c in classes:
+            idx = np.where(labels == c)[0]
+            for i in idx:
+                pid = video_ids[i].split('_')[0]
+                if pid in train_pids:
+                    train.append(i)
+                elif pid in val_pids:
+                    ho1.append(i)
+                elif pid in test_pids:
+                    ho2.append(i)
+        return np.array(train, dtype=int), np.array(ho1, dtype=int), np.array(ho2, dtype=int)
 
-    Mirrors nac/data.py::known_three_way (same integer cut arithmetic:
-    sp = int(frac*n), sp2 = sp + (n-sp)//2 -- NOT frac-derived, required for
-    exact reproducibility of the heldout split sizes)."""
     train, ho1, ho2 = [], [], []
 
     def cuts(n):
@@ -124,9 +172,36 @@ def known_three_way(classes, labels, video_ids, rng, frac=0.8):
 
 def novel_phase_split(novel_classes, labels, rng, n_seen):
     """Split novel classes into seen (phase-1, samples halved across phases) and
-    unseen (phase-2 only). Sample-level, not group-aware -- mirrors
-    nac/data.py::novel_phase_split exactly (that one isn't group-aware either).
-    Returns (seen_class_set, sn1, sn2, un2)."""
+    unseen (phase-2 only). Sample-level, not group-aware."""
+    if os.path.exists('selected_participants.json'):
+        import json
+        with open('selected_participants.json') as f:
+            sel = json.load(f)
+        val_pids = set(sel['val'])
+        test_pids = set(sel['test'])
+        
+        d = np.load('features_epic.npz', allow_pickle=True)
+        video_ids = d['video_id']
+        
+        perm = rng.permutation(len(novel_classes))
+        seen = set(novel_classes[perm[:n_seen]])
+        sn1, sn2, un2 = [], [], []
+        for c in novel_classes:
+            idx = np.where(labels == c)[0]
+            if c in seen:
+                for i in idx:
+                    pid = video_ids[i].split('_')[0]
+                    if pid in val_pids:
+                        sn1.append(i)
+                    elif pid in test_pids:
+                        sn2.append(i)
+            else:
+                for i in idx:
+                    pid = video_ids[i].split('_')[0]
+                    if pid in test_pids:
+                        un2.append(i)
+        return seen, np.array(sn1, dtype=int), np.array(sn2, dtype=int), np.array(un2, dtype=int)
+
     perm = rng.permutation(len(novel_classes))
     seen = set(novel_classes[perm[:n_seen]])
     sn1, sn2, un2 = [], [], []

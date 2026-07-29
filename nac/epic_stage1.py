@@ -50,10 +50,19 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
     
     # Split novel classes/samples 50/50 into validation and test sets
     novel_idx = np.where(novel)[0]
-    rng.shuffle(novel_idx)
-    half = len(novel_idx) // 2
-    val_novel_idx = novel_idx[:half]
-    test_novel_idx = novel_idx[half:]
+    if os.path.exists('selected_participants.json'):
+        import json
+        with open('selected_participants.json') as f:
+            sel = json.load(f)
+        val_pids = set(sel['val'])
+        test_pids = set(sel['test'])
+        val_novel_idx = np.array([i for i in novel_idx if video_ids[i].split('_')[0] in val_pids], dtype=int)
+        test_novel_idx = np.array([i for i in novel_idx if video_ids[i].split('_')[0] in test_pids], dtype=int)
+    else:
+        rng.shuffle(novel_idx)
+        half = len(novel_idx) // 2
+        val_novel_idx = novel_idx[:half]
+        test_novel_idx = novel_idx[half:]
 
     # Construct Val & Test sets
     val_idx = np.concatenate([val_heldout_idx, val_novel_idx])

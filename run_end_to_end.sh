@@ -41,6 +41,7 @@ SKIP_EVAL=false
 USE_RAW_DOWNLOAD=false   # set to true to use the legacy Bristol raw-video path
 LIMIT=0          # 0 means no limit
 HF_TOKEN="${HF_TOKEN:-}"
+PERCENTAGE=100
 ANNOT_DIR="epic-kitchens-100-annotations"
 DL_SCRIPTS_DIR="epic-kitchens-download-scripts"
 HF_REPO="lightly-ai/epic-kitchens-100-clips"
@@ -60,6 +61,7 @@ while [[ $# -gt 0 ]]; do
         --use-raw-download) USE_RAW_DOWNLOAD=true;  shift ;;
         --limit)            LIMIT="$2";             shift 2 ;;
         --hf-token)         HF_TOKEN="$2";          shift 2 ;;
+        --percentage)       PERCENTAGE="$2";        shift 2 ;;
         -h|--help) sed -n '3,26p' "$0" | sed 's/^#  \?//'; exit 0 ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
     esac
@@ -125,6 +127,13 @@ ok "EPIC download scripts ready."
 # =============================================================================
 step "[3/5] Downloading pre-clipped EPIC-KITCHENS-100 narrations (HuggingFace)"
 # =============================================================================
+
+echo "Determining participants to include (percentage: $PERCENTAGE%)..."
+PARTICIPANTS=$(python3 select_participants.py "$PERCENTAGE")
+echo "Selected participants: $PARTICIPANTS"
+if [[ "$SKIP_EXTRACTION" != "true" ]]; then
+    rm -f features_epic.npz features_epic.npz.partial.npz
+fi
 
 if [[ "$USE_RAW_DOWNLOAD" == "true" ]]; then
     # -------------------------------------------------------------------------
