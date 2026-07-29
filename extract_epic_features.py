@@ -31,7 +31,7 @@ from nac.epic_data import load_epic_manifest
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_FRAMES = 16
 BATCH_SIZE = 512
-NUM_WORKERS = 12
+NUM_WORKERS = min(4, os.cpu_count() or 2)
 CHECKPOINT_EVERY = 5000
 OUT_PATH = 'features_epic.npz'
 PARTIAL_PATH = 'features_epic.npz.partial.npz'
@@ -202,12 +202,13 @@ def decode_audio(path, target_sr=16000):
 
 
 class EpicFeatureDataset(Dataset):
-    def __init__(self, paths, start_frames, stop_frames, is_video, processor):
+    def __init__(self, paths, start_frames, stop_frames, is_video, processor, ast_extractor):
         self.paths = paths
         self.start_frames = start_frames
         self.stop_frames = stop_frames
         self.is_video = is_video
         self.processor = processor
+        self.ast_extractor = ast_extractor
 
     def __len__(self):
         return len(self.paths)
@@ -236,10 +237,10 @@ class EpicFeatureDataset(Dataset):
                 aw = decode_audio(path)
                 
             pv = self.processor(picked, return_tensors="pt")['pixel_values'][0]
-            return pv, aw, idx
+            audio_feat = self.ast_extractor(aw, sampling_rate=16000, return_tensors="pt")['input_values'][0]
+            return pv, audio_feat, idx
         except Exception:
             return None
-
 
 
 def collate(batch):
@@ -247,7 +248,7 @@ def collate(batch):
     if not batch:
         return None, None, []
     pv, aw, idxs = zip(*batch)
-    return torch.stack(pv), torch.tensor(np.array(aw), dtype=torch.float32), list(idxs)
+    return torch.stack(pv), torch.stack(aw), list(idxs)
 
 
 class VideoMAEWrapper(torch.nn.Module):
@@ -331,7 +332,8 @@ def main():
         remaining.start_frame.tolist() if 'start_frame' in remaining.columns else None,
         remaining.stop_frame.tolist() if 'stop_frame' in remaining.columns else None,
         remaining.is_video.tolist() if 'is_video' in remaining.columns else None,
-        processor
+        processor,
+        ast_extractor
     )
     loader = DataLoader(ds, batch_size=batch_size, collate_fn=collate,
                         num_workers=NUM_WORKERS, shuffle=False, pin_memory=True)
@@ -346,9 +348,7 @@ def main():
             pv = pv.to(DEVICE, non_blocking=True)
             video_out = videomae_wrapped(pv)
             
-            aw_list = [w.numpy() for w in aw]
-            audio_inputs = ast_extractor(aw_list, sampling_rate=16000, return_tensors="pt")
-            audio_in = audio_inputs['input_values'].to(DEVICE)
+            audio_in = aw.to(DEVICE, non_blocking=True)
             audio_out = ast_wrapped(audio_in)
             
             fused_out = torch.cat([video_out, audio_out], dim=-1)
