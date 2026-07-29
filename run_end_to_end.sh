@@ -225,11 +225,17 @@ except ImportError:
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'huggingface_hub', '-q'])
     import huggingface_hub
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import disable_progress_bars
-import os, csv
+import os, csv, fnmatch
 
 disable_progress_bars()
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'tqdm', '-q'])
+    from tqdm import tqdm
 
 repo_id   = os.environ.get("HF_REPO", "")
 clips_dir = os.environ.get("CLIPS_DIR", "")
@@ -251,19 +257,62 @@ if participants == 'all':
 else:
     patterns = [f"clips/{p.strip()}/*.mp4" for p in participants.split(',')]
 
-print(f"Downloading with patterns: {patterns}")
-
 local_dir = os.path.dirname(clips_dir)  # parent of 'clips/'
 os.makedirs(local_dir, exist_ok=True)
 
-snapshot_download(
-    repo_id=repo_id,
-    repo_type="dataset",
-    local_dir=local_dir,
-    allow_patterns=patterns,
-    token=token,
-    ignore_patterns=["*.json", "*.csv", "README*"],
-)
+print("Querying HuggingFace dataset file list...")
+try:
+    api = HfApi(token=token)
+    all_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
+except Exception as e:
+    print(f"Error querying repo: {e}")
+    sys.exit(1)
+
+target_files = []
+for f in all_files:
+    for pattern in patterns:
+        if fnmatch.fnmatch(f, pattern):
+            target_files.append(f)
+            break
+
+# If limit > 0, restrict download targets to only the first 'limit' clips
+if limit > 0:
+    import pandas as pd
+    df_train = pd.read_csv(f"{annot_dir}/EPIC_100_train.csv")
+    df_val = pd.read_csv(f"{annot_dir}/EPIC_100_validation.csv")
+    df_annot = pd.concat([df_train, df_val], ignore_index=True)
+    df_annot = df_annot.drop_duplicates(subset=['narration_id'])
+    
+    if participants != 'all':
+        allowed_pids = set(participants.split(','))
+        df_annot = df_annot[df_annot.participant_id.isin(allowed_pids)]
+        
+    target_narration_ids = set(df_annot.head(limit).narration_id.values)
+    target_files = [f for f in target_files if os.path.basename(f)[:-4] in target_narration_ids]
+
+missing_files = []
+for f in target_files:
+    dest_path = os.path.join(local_dir, f)
+    if not os.path.exists(dest_path):
+        missing_files.append(f)
+
+print(f"Total target files: {len(target_files)}")
+print(f"Already downloaded: {len(target_files) - len(missing_files)} / {len(target_files)}")
+
+if missing_files:
+    print(f"Downloading {len(missing_files)} missing files...")
+    for f in tqdm(missing_files, desc="Downloading clips", unit="file"):
+        try:
+            hf_hub_download(
+                repo_id=repo_id,
+                repo_type="dataset",
+                filename=f,
+                local_dir=local_dir,
+                token=token,
+            )
+        except Exception as e:
+            print(f"\nError downloading {f}: {e}")
+            sys.exit(1)
 
 # Count what we got
 import glob

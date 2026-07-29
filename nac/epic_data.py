@@ -9,6 +9,7 @@ train/heldout).
 """
 import glob
 import os
+import json
 
 import numpy as np
 import pandas as pd
@@ -41,7 +42,6 @@ def load_epic_manifest(min_count=20, clips_root=CLIPS_ROOT, annot_path=ANNOT_TRA
         df = pd.read_csv(annot_path)
 
     if os.path.exists('selected_participants.json'):
-        import json
         with open('selected_participants.json') as f:
             sel = json.load(f)
         all_sel_pids = set(sel['train'] + sel['val'] + sel['test'])
@@ -105,7 +105,6 @@ def _split_units(idx, video_ids, rng, cut_fn):
 def known_train_heldout(classes, labels, video_ids, rng, frac=0.8):
     """Stage-1 split: per-class group-aware train/heldout (cut at int(frac*n))."""
     if os.path.exists('selected_participants.json'):
-        import json
         with open('selected_participants.json') as f:
             sel = json.load(f)
         train_pids = set(sel['train'])
@@ -135,7 +134,6 @@ def known_train_heldout(classes, labels, video_ids, rng, frac=0.8):
 def known_three_way(classes, labels, video_ids, rng, frac=0.8):
     """Stage-2 split: train / phase-1 heldout / phase-2 heldout, group-aware."""
     if os.path.exists('selected_participants.json'):
-        import json
         with open('selected_participants.json') as f:
             sel = json.load(f)
         train_pids = set(sel['train'])
@@ -174,7 +172,6 @@ def novel_phase_split(novel_classes, labels, rng, n_seen):
     """Split novel classes into seen (phase-1, samples halved across phases) and
     unseen (phase-2 only). Sample-level, not group-aware."""
     if os.path.exists('selected_participants.json'):
-        import json
         with open('selected_participants.json') as f:
             sel = json.load(f)
         val_pids = set(sel['val'])

@@ -51,7 +51,6 @@ def run_epic_stage1(label_space, methods=ALL_METHODS, epochs=75, seed=0,
     # Split novel classes/samples 50/50 into validation and test sets
     novel_idx = np.where(novel)[0]
     if os.path.exists('selected_participants.json'):
-        import json
         with open('selected_participants.json') as f:
             sel = json.load(f)
         val_pids = set(sel['val'])
